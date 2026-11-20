@@ -11,10 +11,12 @@ package visionsort.bridge;
 import java.util.function.Supplier;
 
 import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 
 import forge.game.Game;
 import forge.game.phase.PhaseHandler;
+import forge.game.player.Player;
 
 /**
  * Every decision of one AI seat passes through here (see the generated HookedControllerAi):
@@ -25,10 +27,19 @@ import forge.game.phase.PhaseHandler;
  *    isn't a move, and Novice shouldn't make mistakes in its imagination;
  *  - notifications (reveal..., notify..., waiting for input): nothing is chosen.
  *
- * Forge's AI sometimes asks itself further questions while deciding (choosing targets while
- * choosing a spell). Those nested decisions are logged with their depth, after their parent.
- * Only top-level decisions are handed to the policy, so one mistake isn't stacked on another
- * inside the same choice.
+ * Nested decisions - asked while the seat is deciding something else - are logged with their
+ * depth (1 = asked inside a top-level decision), after their parent. About 30% of decisions are
+ * nested, mostly paying mana while casting. The policy sees them too, marked nested, except
+ * inside chooseSpellAbilityToPlay: there the AI is only planning (and may be on its own
+ * evaluation thread), so nothing it asks itself there is a move.
+ *
+ * Per seat, the hook also:
+ *  - sets look-ahead: Forge's switch is one flag on the game, read only inside the deciding
+ *    player's own AI, so it's set to this seat's value for each of its top-level decisions and
+ *    put back afterwards (the opponent can be asked something in the middle);
+ *  - forces who plays first, if asked: Forge flips for it, then asks the winner's
+ *    chooseStartingPlayer; the hook lets the AI answer (so the game's random numbers stay the
+ *    same) and then names the requested seat.
  */
 public final class DecisionHook {
     private final String seat;
@@ -37,16 +48,22 @@ public final class DecisionHook {
     private final boolean keepLog;
     private final DecisionCounts counts;
     private final GameRecorder recorder;
+    private final boolean lookahead;      // Forge's flat Monte Carlo search on for this seat
+    private final String firstSeat;       // who plays first, or null for Forge's coin flip
     private int depth;
+    private String topDecision = "";
 
     DecisionHook(final String seat, final Policy policy, final JsonArray log, final boolean keepLog,
-            final DecisionCounts counts, final GameRecorder recorder) {
+            final DecisionCounts counts, final GameRecorder recorder, final boolean lookahead,
+            final String firstSeat) {
         this.seat = seat;
         this.policy = policy;
         this.log = log;
         this.keepLog = keepLog;
         this.counts = counts;
         this.recorder = recorder;
+        this.lookahead = lookahead;
+        this.firstSeat = firstSeat;
     }
 
     Object call(final HookedControllerAi controller, final String decision, final Object[] args,
@@ -59,6 +76,7 @@ public final class DecisionHook {
         final boolean top = level == 0;
         if (top) {
             recorder.step(game, seat, decision);   // the state as the decision is asked; may stop the game here
+            topDecision = decision;
         }
         final JsonObject entry = new JsonObject();
         if (keepLog) {
@@ -73,6 +91,15 @@ public final class DecisionHook {
             }
             log.add(entry);   // added now, so a parent comes before the decisions nested in it
         }
+
+        final boolean savedMc = game.AI_FLAT_MONTE_CARLO;
+        final boolean savedMax = game.AI_FLAT_MONTE_CARLO_MAX;
+        final boolean savedLite = game.AI_FLAT_MONTE_CARLO_LITE;
+        if (top) {
+            game.AI_FLAT_MONTE_CARLO = lookahead;
+            game.AI_FLAT_MONTE_CARLO_MAX = false;    // Forge's max mode is timed; see Skills
+            game.AI_FLAT_MONTE_CARLO_LITE = false;
+        }
         depth++;
         final Object aiChoice;
         try {
@@ -84,26 +111,52 @@ public final class DecisionHook {
             throw e;
         } finally {
             depth--;
+            if (top) {
+                game.AI_FLAT_MONTE_CARLO = savedMc;
+                game.AI_FLAT_MONTE_CARLO_MAX = savedMax;
+                game.AI_FLAT_MONTE_CARLO_LITE = savedLite;
+            }
         }
-        final Object chosen = top ? policy.adjust(decision, args, aiChoice) : aiChoice;
-        final boolean changed = chosen != aiChoice;
-        counts.count(seat, decision, changed);
+
+        // what the AI wanted, described before a policy may change it in place (a combat, targets)
+        final JsonElement wanted = keepLog ? describeChoice(decision, args, aiChoice) : null;
+        Object chosen = aiChoice;
+        String changedBy = null;
+        if (top || !topDecision.equals("chooseSpellAbilityToPlay")) {
+            final Object adjusted = policy.adjust(decision, args, aiChoice, !top);
+            if (adjusted != aiChoice) {
+                changedBy = policy.name();
+                chosen = adjusted == Policy.CHANGED_IN_PLACE ? aiChoice : adjusted;
+            }
+        }
+        if (top && firstSeat != null && decision.equals("chooseStartingPlayer")) {
+            for (final Player p : game.getPlayers()) {
+                if (p.getName().equals(firstSeat) && p != aiChoice) {
+                    chosen = p;
+                    changedBy = "first_seat";
+                }
+            }
+        }
+        counts.count(seat, decision, changedBy != null);
 
         if (keepLog) {
             entry.add("args", Describe.args(args));
-            // void decisions (attackers, blockers) record their effect: the combat after it
-            entry.add("chosen", aiChoice == null && args.length > 0 && isVoidCombat(decision)
-                    ? Describe.of(args[args.length - 1]) : Describe.of(chosen));
-            if (changed) {
-                entry.add("ai_wanted", Describe.of(aiChoice));
-                entry.addProperty("changed_by", policy.name());
+            entry.add("chosen", changedBy == null ? wanted : describeChoice(decision, args, chosen));
+            if (changedBy != null) {
+                entry.add("ai_wanted", wanted);
+                entry.addProperty("changed_by", changedBy);
             }
         }
         return chosen;
     }
 
-    private static boolean isVoidCombat(final String decision) {
-        return decision.equals("declareAttackers") || decision.equals("declareBlockers");
+    /** Void decisions (attackers, blockers) record their effect: the combat after them. */
+    private static JsonElement describeChoice(final String decision, final Object[] args, final Object choice) {
+        if (choice == null && args.length > 0
+                && (decision.equals("declareAttackers") || decision.equals("declareBlockers"))) {
+            return Describe.of(args[args.length - 1]);
+        }
+        return Describe.of(choice);
     }
 
     private static boolean isNotification(final String decision) {

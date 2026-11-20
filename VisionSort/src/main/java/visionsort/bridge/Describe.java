@@ -67,7 +67,16 @@ final class Describe {
         }
         if (o instanceof SpellAbility sa) {
             final Card host = sa.getHostCard();
-            return new JsonPrimitive(cut((host == null ? "?" : card(host)) + ": " + sa));
+            String text = (host == null ? "?" : card(host)) + ": " + sa;
+            if (sa.usesTargeting() && sa.getTargets() != null && !sa.getTargets().isEmpty()) {
+                final StringBuilder t = new StringBuilder();
+                for (final Object target : sa.getTargets()) {
+                    t.append(t.length() == 0 ? "" : ", ").append(target instanceof Card c ? card(c)
+                            : target instanceof GameEntity g ? g.getName() : String.valueOf(target));
+                }
+                text = cut(text) + " -> " + t;   // targets last, so they survive the cut
+            }
+            return new JsonPrimitive(text.length() <= MAX_TEXT + 80 ? text : cut(text));
         }
         if (o instanceof Combat c) {
             return combat(c);

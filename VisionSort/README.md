@@ -16,10 +16,18 @@ and talks to it over stdin / stdout.
   Forge prints goes to stderr. See `Protocol.java` and `PlayCommand.java` for the messages.
 - Re-seeds Forge's random generator before every game, so one process (Forge takes ~30 s to start)
   can play game after game, each repeatable from its seed.
+- Gives each seat its own AI skill (`Skills`): one of Forge's profiles (Default, Cautious, Reckless,
+  Experimental, Hard, Hardest), overrides of any of Forge's AI settings, and look-ahead off / on /
+  max. `{"cmd":"profiles"}` lists every setting with Forge's own explanation and the values of
+  Forge's profiles. A seat's look-ahead is bounded by its search counts, not by time, so its games
+  repeat; Forge's own "max" mode is timed and isn't used ("max" here uses the same counts).
 - Routes every AI decision through a hook (`DecisionHook`): it can log each one (what was asked,
   what was chosen) and let a policy change the answer. `MistakePolicy` gives a seat deliberate,
-  always-legal mistakes at set rates, for VisionSort's "Novice" skill. Without one, a seat plays
+  always-legal mistakes at set rates, for VisionSort's "Novice" skill: skipped lands and spells,
+  wrong targets, attackers held back or sent in, blocks skipped or added, other options, declined
+  "may"s - each checked with Forge's own rules where it could be illegal. Without one, a seat plays
   exactly as Forge's own AI.
+- `"first"` names the seat that plays first (otherwise Forge flips for it).
 - Records games (`"record": "steps"` or `"snapshots"`): one step per top-level decision, with
   Forge's own game events since the last step and a checksum of the game state as the decision
   was asked (`StateSnapshot`). `"stop_at": k` replays the same game to step k and returns the
@@ -49,7 +57,7 @@ mvn install:install-file -Dfile=<forge>/forge-gui-desktop-2.0.16-jar-with-depend
 mvn package
 ```
 
-That gives `target/visionsort-forge-bridge-0.3.1.jar`.
+That gives `target/visionsort-forge-bridge-0.4.0.jar`.
 
 ## Running
 
@@ -62,7 +70,7 @@ Windows form: on Linux / macOS use `:` between the jars and `\` to continue the 
 
 ```
 java -XX:+UnlockExperimentalVMOptions -XX:hashCode=2 -Xmx4096m -Dfile.encoding=UTF-8 ^
-     -cp "forge-gui-desktop-2.0.16-jar-with-dependencies.jar;<path>/visionsort-forge-bridge-0.3.1.jar" ^
+     -cp "forge-gui-desktop-2.0.16-jar-with-dependencies.jar;<path>/visionsort-forge-bridge-0.4.0.jar" ^
      visionsort.bridge.Main
 ```
 

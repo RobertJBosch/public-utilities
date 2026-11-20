@@ -9,14 +9,23 @@
 package visionsort.bridge;
 
 /**
- * Looks at what Forge's AI chose for a top-level decision and may answer differently. A policy may
- * only return a legal answer: one of the options Forge offered, or a choice that is always
- * allowed (passing priority, declining an optional action).
+ * Looks at what Forge's AI chose for a decision and may answer differently. A policy may only
+ * return a legal answer: one of the options Forge offered, a choice that is always allowed
+ * (passing priority, declining an optional action), or a change Forge's own validator accepts.
  *
- * Returning the AI's own object unchanged (the same reference) means "no change"; DecisionHook
- * compares references to tell.
+ * Return values:
+ *  - the AI's own object (the same reference): no change;
+ *  - {@link #CHANGED_IN_PLACE}: the policy changed the AI's answer where it lies (a combat, the
+ *    targets of the chosen spell); the decision still returns the AI's object;
+ *  - anything else: the new answer.
+ *
+ * nested: the decision was asked while the seat was deciding something else (paying a cost,
+ * resolving an effect). Policies should only change nested decisions of kinds that stay legal on
+ * their own.
  */
 interface Policy {
+    Object CHANGED_IN_PLACE = new Object();
+
     Policy NONE = new Policy() {
         @Override
         public String name() {
@@ -24,12 +33,12 @@ interface Policy {
         }
 
         @Override
-        public Object adjust(final String decision, final Object[] args, final Object aiChoice) {
+        public Object adjust(final String decision, final Object[] args, final Object aiChoice, final boolean nested) {
             return aiChoice;
         }
     };
 
     String name();
 
-    Object adjust(String decision, Object[] args, Object aiChoice);
+    Object adjust(String decision, Object[] args, Object aiChoice, boolean nested);
 }
