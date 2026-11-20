@@ -21,6 +21,12 @@ and talks to it over stdin / stdout.
   always-legal mistakes at set rates, for VisionSort's "Novice" skill. Without one, a seat plays
   exactly as Forge's own AI.
 
+- Records games (`"record": "steps"` or `"snapshots"`): one step per top-level decision, with
+  Forge's own game events since the last step and a checksum of the game state as the decision
+  was asked (`StateSnapshot`). `"stop_at": k` replays the same game to step k and returns the
+  state there plus every checksum along the way. Games are a pure function of their seed, decks
+  and settings, so the checksums match the recording exactly, in the same process or a new one.
+
 The hooked controller is generated from Forge's jar, since Forge's ~115 decision methods change
 between releases. After upgrading Forge, regenerate it:
 
@@ -44,7 +50,7 @@ mvn install:install-file -Dfile=<forge>/forge-gui-desktop-2.0.16-jar-with-depend
 mvn package
 ```
 
-That gives `target/visionsort-forge-bridge-0.2.0.jar`.
+That gives `target/visionsort-forge-bridge-0.3.0.jar`.
 
 ## Running
 
@@ -52,7 +58,7 @@ From Forge's folder (Forge finds `res/` relative to the working directory):
 
 ```
 java -XX:+UnlockExperimentalVMOptions -XX:hashCode=2 -Xmx4096m -Dfile.encoding=UTF-8 ^
-     -cp "forge-gui-desktop-2.0.16-jar-with-dependencies.jar;<path>/visionsort-forge-bridge-0.2.0.jar" ^
+     -cp "forge-gui-desktop-2.0.16-jar-with-dependencies.jar;<path>/visionsort-forge-bridge-0.3.0.jar" ^
      visionsort.bridge.Main
 ```
 

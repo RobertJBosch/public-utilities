@@ -51,6 +51,11 @@ import forge.view.TimeLimitedCodeBlock;
  *     "decision":"chooseSpellAbilityToPlay", "args":[...], "chosen":..., "ai_wanted":...,
  *     "changed_by":"mistake"}, ...]}
  *
+ * "record": "none" | "steps" | "snapshots" adds the game record (GameRecorder): one step per
+ * top-level decision with the events since the last step and a state checksum ("snapshots": the
+ * state too). "stop_at": k replays the same game to step k and stops: the reply has "stopped_at",
+ * the "state" there and the checksums of steps 0..k instead of an outcome.
+ *
  * Every AI seat plays through the hooked controller (DecisionHook): "decisions" asks for the full
  * decision log, "mistakes" gives a seat Novice's mistake rates (MistakePolicy.KINDS). Without
  * mistakes a seat plays exactly as Forge's own AI with that profile.
@@ -82,6 +87,12 @@ final class PlayCommand {
         final boolean keepDecisions = req.has("decisions") && req.get("decisions").getAsBoolean();
         final JsonArray decisions = new JsonArray();
         final DecisionCounts counts = new DecisionCounts();
+        final int stopAt = req.has("stop_at") ? req.get("stop_at").getAsInt() : -1;
+        GameRecorder.Mode mode = GameRecorder.Mode.valueOf(str(req, "record", "none").toUpperCase());
+        if (stopAt >= 0 && mode == GameRecorder.Mode.NONE) {
+            mode = GameRecorder.Mode.STEPS;   // a stop returns the checksums of every step up to it
+        }
+        final GameRecorder recorder = new GameRecorder(mode, stopAt);
         int i = 0;
         for (final JsonElement e : req.getAsJsonArray("players")) {
             final JsonObject p = e.getAsJsonObject();
@@ -101,7 +112,7 @@ final class PlayCommand {
             final String name = str(p, "name", deck.getName());
             final Policy policy = MistakePolicy.from(p.has("mistakes") ? p.getAsJsonObject("mistakes") : null, seed, i);
             rp.setPlayer(new BridgeLobbyPlayer(name, profile,
-                    new DecisionHook(name, policy, decisions, keepDecisions, counts)));
+                    new DecisionHook(name, policy, decisions, keepDecisions, counts, recorder)));
             players.add(rp);
             i++;
         }
@@ -114,6 +125,7 @@ final class PlayCommand {
         game.setNoGUIUser();
         game.AI_FLAT_MONTE_CARLO = !"off".equals(lookahead);
         game.AI_FLAT_MONTE_CARLO_MAX = "max".equals(lookahead);
+        game.subscribeToEvents(recorder);   // before the game starts: shuffles and mulligans are events too
 
         final long t0 = System.nanoTime();
         boolean timedOut = false;
@@ -121,21 +133,26 @@ final class PlayCommand {
             TimeLimitedCodeBlock.runWithTimeout(() -> match.startGame(game), timeoutS, TimeUnit.SECONDS);
         } catch (TimeoutException e) {
             timedOut = true;
+        } catch (GameRecorder.StopAtStep e) {
+            // reached "stop_at": the recorder holds the state there
         } finally {
             if (!game.isGameOver()) {
                 game.setGameOver(GameEndReason.Draw);
             }
         }
 
-        final GameOutcome outcome = game.getOutcome();
         reply.addProperty("seed", seed);
-        reply.addProperty("draw", outcome.isDraw());
-        if (!outcome.isDraw() && outcome.getWinningLobbyPlayer() != null) {
-            reply.addProperty("winner", outcome.getWinningLobbyPlayer().getName());
-        }
-        reply.addProperty("turns", outcome.getLastTurnNumber());
-        reply.addProperty("end_reason", timedOut ? "Timeout" : String.valueOf(outcome.getWinCondition()));
         reply.addProperty("ms", (System.nanoTime() - t0) / 1_000_000);
+        if (!recorder.stopped()) {
+            final GameOutcome outcome = game.getOutcome();
+            reply.addProperty("draw", outcome.isDraw());
+            if (!outcome.isDraw() && outcome.getWinningLobbyPlayer() != null) {
+                reply.addProperty("winner", outcome.getWinningLobbyPlayer().getName());
+            }
+            reply.addProperty("turns", outcome.getLastTurnNumber());
+            reply.addProperty("end_reason", timedOut ? "Timeout" : String.valueOf(outcome.getWinCondition()));
+        }
+        recorder.writeTo(reply, game);
         reply.add("deck_sizes", sizes);
         reply.add("decision_counts", counts.toJson());
         if (keepDecisions) {

@@ -36,15 +36,17 @@ public final class DecisionHook {
     private final JsonArray log;          // shared by every seat of the game, in order
     private final boolean keepLog;
     private final DecisionCounts counts;
+    private final GameRecorder recorder;
     private int depth;
 
     DecisionHook(final String seat, final Policy policy, final JsonArray log, final boolean keepLog,
-            final DecisionCounts counts) {
+            final DecisionCounts counts, final GameRecorder recorder) {
         this.seat = seat;
         this.policy = policy;
         this.log = log;
         this.keepLog = keepLog;
         this.counts = counts;
+        this.recorder = recorder;
     }
 
     Object call(final HookedControllerAi controller, final String decision, final Object[] args,
@@ -53,12 +55,15 @@ public final class DecisionHook {
         if (game == null || game.isSimulationCopy() || isNotification(decision)) {
             return forge.get();
         }
+        final boolean top = depth == 0;
+        if (top) {
+            recorder.step(game, seat, decision);   // the state as the decision is asked; may stop the game here
+        }
         final JsonObject entry = new JsonObject();
         if (keepLog) {
             entry.addProperty("seq", log.size());
             log.add(entry);   // added now, so a parent comes before the decisions nested in it
         }
-        final boolean top = depth == 0;
         depth++;
         final Object aiChoice;
         try {

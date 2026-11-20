@@ -72,6 +72,30 @@ final class Describe {
         if (o instanceof Combat c) {
             return combat(c);
         }
+        if (o instanceof forge.game.zone.Zone z) {
+            return new JsonPrimitive(z.getZoneType() + (z.getPlayer() == null ? "" : ":" + z.getPlayer().getName()));
+        }
+        // Forge's events carry views of the game objects, not the objects (same ids as the cards)
+        if (o instanceof forge.game.card.CardView cv) {
+            return new JsonPrimitive(cv.getName() + "#" + cv.getId());
+        }
+        if (o instanceof forge.game.GameEntityView gv) {   // players
+            return new JsonPrimitive(gv.getName());
+        }
+        if (o instanceof forge.game.zone.ZoneView zv) {
+            return new JsonPrimitive(zv.zoneType() + (zv.player() == null ? "" : ":" + zv.player().getName()));
+        }
+        if (o instanceof forge.game.spellability.SpellAbilityView sv) {
+            final forge.game.card.CardView host = sv.getHostCard();
+            return new JsonPrimitive(cut((host == null ? "?" : host.getName() + "#" + host.getId()) + ": " + sv.getDescription()));
+        }
+        if (o instanceof forge.game.spellability.StackItemView si) {
+            final forge.game.card.CardView src = si.getSourceCard();
+            return new JsonPrimitive(cut((src == null ? "?" : src.getName() + "#" + src.getId()) + ": " + si.getText()));
+        }
+        if (o instanceof com.google.common.collect.Multimap<?, ?> mm) {
+            return of(mm.asMap());
+        }
         if (o instanceof Pair<?, ?> p) {
             final JsonArray a = new JsonArray();
             a.add(of(p.getLeft()));
