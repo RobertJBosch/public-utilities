@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  VisionSort's Forge bridge. GPL-3.0-or-later (it links Forge, which is GPL-3.0).
+  Build: see README.md - Forge's desktop jar is installed into the local Maven repository first.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>visionsort</groupId>
+  <artifactId>visionsort-forge-bridge</artifactId>
+  <version>0.1.0</version>
+  <packaging>jar</packaging>
+  <name>VisionSort Forge bridge</name>
+
+  <licenses>
+    <license>
+      <name>GPL-3.0-or-later</name>
+      <url>https://www.gnu.org/licenses/gpl-3.0.html</url>
+    </license>
+  </licenses>
+
+  <properties>
+    <!-- The Forge release this bridge is built and tested against. -->
+    <forge.version>2.0.16</forge.version>
+    <!-- Forge runs on Java 17+; build for 17 so the jar runs on any of them (VisionSort ships 25 LTS). -->
+    <maven.compiler.release>17</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+  </properties>
+
+  <dependencies>
+    <!-- Forge's desktop jar with its dependencies (Gson, Guava, commons-lang3 ...). Provided: Forge is
+         downloaded from its own releases and put on the class path next to this jar, never bundled. -->
+    <dependency>
+      <groupId>forge</groupId>
+      <artifactId>forge-gui-desktop-jar-with-dependencies</artifactId>
+      <version>${forge.version}</version>
+      <scope>provided</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <finalName>visionsort-forge-bridge-${project.version}</finalName>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.14.0</version>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-jar-plugin</artifactId>
+        <version>3.4.2</version>
+        <configuration>
+          <archive>
+            <manifest>
+              <mainClass>visionsort.bridge.Main</mainClass>
+            </manifest>
+          </archive>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>
