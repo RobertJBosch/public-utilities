@@ -28,6 +28,10 @@ and talks to it over stdin / stdout.
   "may"s - each checked with Forge's own rules where it could be illegal. Without one, a seat plays
   exactly as Forge's own AI.
 - `"first"` names the seat that plays first (otherwise Forge flips for it).
+- `{"cmd":"resolve","names":[...]}` gives the name Forge knows each card by (a split card keeps
+  "Fire // Ice"; double-faced, adventure and flip cards go by their front face), or null for a
+  card this Forge version doesn't have - so a decklist can be checked before Forge silently drops
+  a card from it.
 - Records games (`"record": "steps"` or `"snapshots"`): one step per top-level decision, with
   Forge's own game events since the last step and a checksum of the game state as the decision
   was asked (`StateSnapshot`). `"stop_at": k` replays the same game to step k and returns the
@@ -57,7 +61,7 @@ mvn install:install-file -Dfile=<forge>/forge-gui-desktop-2.0.16-jar-with-depend
 mvn package
 ```
 
-That gives `target/visionsort-forge-bridge-0.4.1.jar`.
+That gives `target/visionsort-forge-bridge-0.5.0.jar`.
 
 ## Running
 
@@ -70,7 +74,7 @@ Windows form: on Linux / macOS use `:` between the jars and `\` to continue the 
 
 ```
 java -XX:+UnlockExperimentalVMOptions -XX:hashCode=2 -Xmx4096m -Dfile.encoding=UTF-8 ^
-     -cp "forge-gui-desktop-2.0.16-jar-with-dependencies.jar;<path>/visionsort-forge-bridge-0.4.1.jar" ^
+     -cp "forge-gui-desktop-2.0.16-jar-with-dependencies.jar;<path>/visionsort-forge-bridge-0.5.0.jar" ^
      visionsort.bridge.Main
 ```
 

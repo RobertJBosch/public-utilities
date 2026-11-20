@@ -21,6 +21,8 @@ import com.google.gson.JsonParser;
  * the id, so VisionSort can match them up.
  *
  *   {"cmd":"ping"}                    -> {"type":"pong"}
+ *   {"cmd":"resolve","names":[...]}   -> {"type":"resolved", "names":{name: Forge's name or null}}
+ *                                        (see ResolveCommand)
  *   {"cmd":"profiles"}                -> {"type":"profiles", "settings":[...], "profiles":{...}}
  *                                        (every Forge AI setting with its explanation, and the
  *                                        values of Forge's profiles - see Skills.catalogue())
@@ -65,6 +67,7 @@ final class Protocol {
                 final String cmd = req.has("cmd") ? req.get("cmd").getAsString() : "";
                 switch (cmd) {
                     case "ping" -> send(message("pong", req));
+                    case "resolve" -> send(ResolveCommand.run(req, message("resolved", req)));
                     case "profiles" -> {
                         final JsonObject m = message("profiles", req);
                         Skills.catalogue().entrySet().forEach(x -> m.add(x.getKey(), x.getValue()));
