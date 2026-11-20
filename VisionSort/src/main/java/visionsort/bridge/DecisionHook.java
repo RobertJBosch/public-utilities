@@ -137,7 +137,8 @@ public final class DecisionHook {
                 }
             }
         }
-        counts.count(seat, decision, changedBy != null);
+        // "changed" counts the policy's changes (Novice's mistakes); naming the first seat is setup, not a mistake
+        counts.count(seat, decision, changedBy != null && !changedBy.equals("first_seat"));
 
         if (keepLog) {
             entry.add("args", Describe.args(args));

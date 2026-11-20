@@ -57,7 +57,7 @@ mvn install:install-file -Dfile=<forge>/forge-gui-desktop-2.0.16-jar-with-depend
 mvn package
 ```
 
-That gives `target/visionsort-forge-bridge-0.4.0.jar`.
+That gives `target/visionsort-forge-bridge-0.4.1.jar`.
 
 ## Running
 
@@ -70,7 +70,7 @@ Windows form: on Linux / macOS use `:` between the jars and `\` to continue the 
 
 ```
 java -XX:+UnlockExperimentalVMOptions -XX:hashCode=2 -Xmx4096m -Dfile.encoding=UTF-8 ^
-     -cp "forge-gui-desktop-2.0.16-jar-with-dependencies.jar;<path>/visionsort-forge-bridge-0.4.0.jar" ^
+     -cp "forge-gui-desktop-2.0.16-jar-with-dependencies.jar;<path>/visionsort-forge-bridge-0.4.1.jar" ^
      visionsort.bridge.Main
 ```
 
