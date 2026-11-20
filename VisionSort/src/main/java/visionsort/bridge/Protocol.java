@@ -30,7 +30,9 @@ import com.google.gson.JsonParser;
 final class Protocol {
     private final BufferedReader in;
     private final PrintStream out;
-    private final Gson gson = new Gson();
+    // serializeNulls: a decision that chose nothing (a pass, a declined option) must say "chosen": null,
+    // not leave the field out - otherwise passes look like decisions that never finished
+    private final Gson gson = new com.google.gson.GsonBuilder().serializeNulls().create();
 
     Protocol(final BufferedReader in, final PrintStream out) {
         this.in = in;

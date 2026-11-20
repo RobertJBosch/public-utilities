@@ -33,7 +33,6 @@ import forge.game.GameRules;
 import forge.game.GameType;
 import forge.game.Match;
 import forge.game.player.RegisteredPlayer;
-import forge.player.GamePlayerUtil;
 import forge.util.MyRandom;
 import forge.view.TimeLimitedCodeBlock;
 
@@ -41,11 +40,20 @@ import forge.view.TimeLimitedCodeBlock;
  * Plays one AI-vs-AI game:
  *
  *   {"cmd":"play", "id":1, "seed":101, "format":"Commander", "timeout_s":600,
- *    "lookahead":"off" | "on" | "max", "log":true,
- *    "players":[{"name":"...", "deck":"X:/path/deck.dck", "profile":"Default"}, ...]}
+ *    "lookahead":"off" | "on" | "max", "log":true, "decisions":true,
+ *    "players":[{"name":"...", "deck":"X:/path/deck.dck", "profile":"Default",
+ *                "mistakes":{"skip_spell":0.2, "choose":0.3, ...}}, ...]}
  *
  * -> {"type":"result", "id":1, "seed":101, "draw":false, "winner":"...", "turns":8,
- *     "end_reason":"AllOpponentsLost", "ms":5644, "deck_sizes":[100,100], "log":["...", ...]}
+ *     "end_reason":"AllOpponentsLost", "ms":5644, "deck_sizes":[100,100],
+ *     "decision_counts":{"<seat>":{"<decision>":[made, changed], ...}, ...},
+ *     "log":["...", ...], "decisions":[{"seq":0, "turn":1, "phase":"MAIN1", "seat":"...",
+ *     "decision":"chooseSpellAbilityToPlay", "args":[...], "chosen":..., "ai_wanted":...,
+ *     "changed_by":"mistake"}, ...]}
+ *
+ * Every AI seat plays through the hooked controller (DecisionHook): "decisions" asks for the full
+ * decision log, "mistakes" gives a seat Novice's mistake rates (MistakePolicy.KINDS). Without
+ * mistakes a seat plays exactly as Forge's own AI with that profile.
  *
  * The random generator is re-seeded before every game, not once per process. Forge's sim mode
  * seeds once, so its second and later games depend on everything before them (M0: game 3 of a
@@ -71,6 +79,9 @@ final class PlayCommand {
 
         final List<RegisteredPlayer> players = new ArrayList<>();
         final JsonArray sizes = new JsonArray();
+        final boolean keepDecisions = req.has("decisions") && req.get("decisions").getAsBoolean();
+        final JsonArray decisions = new JsonArray();
+        final DecisionCounts counts = new DecisionCounts();
         int i = 0;
         for (final JsonElement e : req.getAsJsonArray("players")) {
             final JsonObject p = e.getAsJsonObject();
@@ -87,7 +98,10 @@ final class PlayCommand {
             }
             final RegisteredPlayer rp = type == GameType.Commander
                     ? RegisteredPlayer.forCommander(deck) : new RegisteredPlayer(deck);
-            rp.setPlayer(GamePlayerUtil.createAiPlayer(str(p, "name", deck.getName()), i, profile));
+            final String name = str(p, "name", deck.getName());
+            final Policy policy = MistakePolicy.from(p.has("mistakes") ? p.getAsJsonObject("mistakes") : null, seed, i);
+            rp.setPlayer(new BridgeLobbyPlayer(name, profile,
+                    new DecisionHook(name, policy, decisions, keepDecisions, counts)));
             players.add(rp);
             i++;
         }
@@ -123,6 +137,10 @@ final class PlayCommand {
         reply.addProperty("end_reason", timedOut ? "Timeout" : String.valueOf(outcome.getWinCondition()));
         reply.addProperty("ms", (System.nanoTime() - t0) / 1_000_000);
         reply.add("deck_sizes", sizes);
+        reply.add("decision_counts", counts.toJson());
+        if (keepDecisions) {
+            reply.add("decisions", decisions);
+        }
         if (withLog) {
             final List<GameLogEntry> entries = new ArrayList<>(game.getGameLog().getLogEntries(null));
             Collections.reverse(entries);   // Forge keeps newest first

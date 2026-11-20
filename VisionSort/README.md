@@ -16,6 +16,17 @@ and talks to it over stdin / stdout.
   Forge prints goes to stderr. See `Protocol.java` and `PlayCommand.java` for the messages.
 - Re-seeds Forge's random generator before every game, so one process (Forge takes ~30 s to start)
   can play game after game, each repeatable from its seed.
+- Routes every AI decision through a hook (`DecisionHook`): it can log each one (what was asked,
+  what was chosen) and let a policy change the answer. `MistakePolicy` gives a seat deliberate,
+  always-legal mistakes at set rates, for VisionSort's "Novice" skill. Without one, a seat plays
+  exactly as Forge's own AI.
+
+The hooked controller is generated from Forge's jar, since Forge's ~115 decision methods change
+between releases. After upgrading Forge, regenerate it:
+
+```
+java -cp <forge>/forge-gui-desktop-<version>-jar-with-dependencies.jar tools/GenerateHookedController.java src/main/java/visionsort/bridge/HookedControllerAi.java
+```
 
 ## Requirements
 
@@ -33,7 +44,7 @@ mvn install:install-file -Dfile=<forge>/forge-gui-desktop-2.0.16-jar-with-depend
 mvn package
 ```
 
-That gives `target/visionsort-forge-bridge-0.1.0.jar`.
+That gives `target/visionsort-forge-bridge-0.2.0.jar`.
 
 ## Running
 
@@ -41,7 +52,7 @@ From Forge's folder (Forge finds `res/` relative to the working directory):
 
 ```
 java -XX:+UnlockExperimentalVMOptions -XX:hashCode=2 -Xmx4096m -Dfile.encoding=UTF-8 ^
-     -cp "forge-gui-desktop-2.0.16-jar-with-dependencies.jar;<path>/visionsort-forge-bridge-0.1.0.jar" ^
+     -cp "forge-gui-desktop-2.0.16-jar-with-dependencies.jar;<path>/visionsort-forge-bridge-0.2.0.jar" ^
      visionsort.bridge.Main
 ```
 
