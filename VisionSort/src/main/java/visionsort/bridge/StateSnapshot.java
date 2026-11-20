@@ -35,11 +35,15 @@ import forge.game.zone.ZoneType;
  *
  * It holds what a player (or VisionSort's table) needs to see and what a restore needs to rebuild:
  * per player life, poison, counters, mana pool, lands played and cards drawn this turn, commander
- * damage taken and commander tax, and every zone in order (the library too: hidden from players,
- * but it decides what happens next, so it belongs in the checksum - VisionSort hides it).
- * Permanents add tapped / counters / damage / attachment / face-down / transformed / summoning
- * sick / phased out, and power and toughness for creatures. Then the stack, turn, phase and
- * whose turn it is.
+ * damage taken and commander tax, city's blessing, speed, ring temptations, and every zone in
+ * order (the library too: hidden from players, but it decides what happens next, so it belongs in
+ * the checksum - VisionSort hides it). Permanents add tapped / counters / damage / attachment /
+ * face-down / transformed / summoning sick / phased out, and power and toughness for creatures.
+ * Then the stack, turn, phase, whose turn and priority it is, monarch, initiative, day / night,
+ * the current combat, and Forge's game timestamp (see of()).
+ *
+ * A checksum can only catch drift in what it covers; the timestamp is there so most hidden
+ * changes (effects that don't show in this model) still change it.
  *
  * It's built in a fixed order, so the same state always gives the same JSON and the same checksum
  * (SHA-256 of the compact JSON, first 16 hex digits). Two games whose checksums match at every
@@ -61,6 +65,16 @@ final class StateSnapshot {
         s.addProperty("phase", String.valueOf(game.getPhaseHandler().getPhase()));
         final Player active = game.getPhaseHandler().getPlayerTurn();
         s.addProperty("active", active == null ? null : active.getName());
+        final Player priority = game.getPhaseHandler().getPriorityPlayer();
+        s.addProperty("priority", priority == null ? null : priority.getName());
+        // Forge's timestamp counter ticks with every timestamped effect, so it catches most changes
+        // the rest of this model doesn't show ("until end of turn" effects, static abilities applied)
+        s.addProperty("timestamp", game.getTimestamp());
+        s.addProperty("monarch", game.getMonarch() == null ? null : game.getMonarch().getName());
+        s.addProperty("initiative", game.getHasInitiative() == null ? null : game.getHasInitiative().getName());
+        final Boolean day = game.getDayTime();
+        s.addProperty("day", day == null ? null : day ? "day" : "night");
+        s.add("combat", game.getCombat() == null ? com.google.gson.JsonNull.INSTANCE : Describe.of(game.getCombat()));
 
         final JsonArray stack = new JsonArray();
         for (final SpellAbilityStackInstance si : game.getStack()) {
@@ -97,6 +111,9 @@ final class StateSnapshot {
         o.addProperty("lost", p.hasLost());
         o.addProperty("lands_played", p.getLandsPlayedThisTurn());
         o.addProperty("drawn_this_turn", p.getNumDrawnThisTurn());
+        o.addProperty("blessing", p.hasBlessing());
+        o.addProperty("speed", p.getSpeed());
+        o.addProperty("ring_tempted", p.getNumRingTemptedYou());
         o.add("counters", counters(p));
 
         final ManaPool pool = p.getManaPool();

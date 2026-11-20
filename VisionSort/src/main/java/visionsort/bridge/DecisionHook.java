@@ -55,19 +55,33 @@ public final class DecisionHook {
         if (game == null || game.isSimulationCopy() || isNotification(decision)) {
             return forge.get();
         }
-        final boolean top = depth == 0;
+        final int level = depth;   // 0 = top-level, 1 = asked while deciding something else, ...
+        final boolean top = level == 0;
         if (top) {
             recorder.step(game, seat, decision);   // the state as the decision is asked; may stop the game here
         }
         final JsonObject entry = new JsonObject();
         if (keepLog) {
+            final PhaseHandler ph = game.getPhaseHandler();
             entry.addProperty("seq", log.size());
+            entry.addProperty("turn", ph.getTurn());       // when asked, not when answered
+            entry.addProperty("phase", String.valueOf(ph.getPhase()));
+            entry.addProperty("seat", seat);
+            entry.addProperty("decision", decision);
+            if (!top) {
+                entry.addProperty("depth", level);
+            }
             log.add(entry);   // added now, so a parent comes before the decisions nested in it
         }
         depth++;
         final Object aiChoice;
         try {
             aiChoice = forge.get();
+        } catch (RuntimeException | Error e) {
+            if (keepLog) {
+                entry.addProperty("interrupted", e.getClass().getSimpleName());   // a stop, or a Forge failure
+            }
+            throw e;
         } finally {
             depth--;
         }
@@ -76,14 +90,6 @@ public final class DecisionHook {
         counts.count(seat, decision, changed);
 
         if (keepLog) {
-            final PhaseHandler ph = game.getPhaseHandler();
-            entry.addProperty("turn", ph.getTurn());
-            entry.addProperty("phase", String.valueOf(ph.getPhase()));
-            entry.addProperty("seat", seat);
-            entry.addProperty("decision", decision);
-            if (!top) {
-                entry.addProperty("depth", depth + 1);
-            }
             entry.add("args", Describe.args(args));
             // void decisions (attackers, blockers) record their effect: the combat after it
             entry.add("chosen", aiChoice == null && args.length > 0 && isVoidCombat(decision)

@@ -15,6 +15,7 @@ import java.util.Random;
 
 import com.google.gson.JsonObject;
 
+import forge.game.player.PlayerController;
 import forge.game.spellability.SpellAbility;
 import forge.util.collect.FCollectionView;
 
@@ -28,17 +29,28 @@ import forge.util.collect.FCollectionView;
  *   choose      chooseSingleEntityForEffect -> another of the options Forge offered
  *   decline     confirmAction said yes to an optional action -> no (yes -> no only: a yes the AI
  *               turned down might commit it to a cost it can't pay)
- *   binary      chooseBinary -> the other answer (both sides are offered)
- *   number      chooseNumber(sa, title, min, max) -> another number in [min, max]
+ *   binary      chooseBinary -> the other answer, only for choice types where both answers are
+ *               always possible (SAFE_BINARY): not AddOrRemove / IncreaseOrDecrease, where there
+ *               may be no counter to remove
  *
- * Not yet: attacks, blocks and targets. Taking an attacker or blocker back can break "must attack /
- * must block" requirements, and targets need Forge's legality checks; they come with the skill files.
+ * Not yet: attacks, blocks, targets and numbers. Taking an attacker or blocker back can break "must
+ * attack / must block" requirements, targets need Forge's legality checks, and a chosen number can
+ * feed a cost paid later (so it must be payable); they come with the skill files.
+ *
+ * Known side effect: when skip_* passes instead of a spell, the AI has already chosen targets / X
+ * for it. Forge chooses them afresh the next time the spell is considered.
  *
  * Its random numbers come from its own generator, seeded from the game seed and the seat, never
  * from Forge's: a Novice game is as repeatable as any other.
  */
 final class MistakePolicy implements Policy {
-    static final List<String> KINDS = List.of("skip_land", "skip_spell", "mulligan", "choose", "decline", "binary", "number");
+    static final List<String> KINDS = List.of("skip_land", "skip_spell", "mulligan", "choose", "decline", "binary");
+
+    /** Binary choices where flipping the AI's answer is always legal. */
+    private static final java.util.Set<PlayerController.BinaryChoiceType> SAFE_BINARY = java.util.EnumSet.of(
+            PlayerController.BinaryChoiceType.HeadsOrTails, PlayerController.BinaryChoiceType.PlayOrDraw,
+            PlayerController.BinaryChoiceType.OddsOrEvens, PlayerController.BinaryChoiceType.LeftOrRight,
+            PlayerController.BinaryChoiceType.TapOrUntap, PlayerController.BinaryChoiceType.UntapOrLeaveTapped);
 
     private final Map<String, Double> rates;
     private final Random random;
@@ -98,19 +110,8 @@ final class MistakePolicy implements Policy {
             case "confirmAction":
                 return Boolean.TRUE.equals(aiChoice) && roll("decline") ? Boolean.FALSE : aiChoice;
             case "chooseBinary":
-                return roll("binary") ? Boolean.valueOf(!(Boolean) aiChoice) : aiChoice;
-            case "chooseNumber": {
-                // only the (sa, title, min, max[, params]) forms: the others pick from a list
-                if (args.length < 4 || !(args[2] instanceof Integer min) || !(args[3] instanceof Integer max)
-                        || max <= min || !roll("number")) {
-                    return aiChoice;
-                }
-                int n = min + random.nextInt(max - min);
-                if (n >= (Integer) aiChoice) {
-                    n++;   // any number in range except the AI's
-                }
-                return Integer.valueOf(n);
-            }
+                return args.length > 2 && args[2] instanceof PlayerController.BinaryChoiceType kind
+                        && SAFE_BINARY.contains(kind) && roll("binary") ? Boolean.valueOf(!(Boolean) aiChoice) : aiChoice;
             default:
                 return aiChoice;
         }

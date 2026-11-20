@@ -36,7 +36,18 @@ import forge.game.event.GameEvent;
  * tell a GUI to redraw are skipped (SKIP).
  */
 final class GameRecorder {
-    enum Mode { NONE, STEPS, SNAPSHOTS }
+    enum Mode {
+        NONE, STEPS, SNAPSHOTS;
+
+        static Mode parse(final String s) {
+            for (final Mode m : values()) {
+                if (m.name().equalsIgnoreCase(s)) {
+                    return m;
+                }
+            }
+            throw new IllegalArgumentException("record must be none, steps or snapshots, not " + s);
+        }
+    }
 
     /** Redraw hints and duplicates: no information a record needs. "Zone" fires ~700 times a game to
      *  tell a GUI to redraw a zone; every actual move is a "CardChangeZone". */
@@ -64,6 +75,11 @@ final class GameRecorder {
 
     /** Called by DecisionHook when a real top-level decision is asked, before the AI answers. */
     void step(final Game game, final String seat, final String decision) {
+        if (stoppedState != null) {
+            // Forge caught the stop somewhere (e.g. on an AI evaluation thread) and played on:
+            // record nothing more and try again at this decision
+            throw new StopAtStep();
+        }
         final int k = next++;
         if (mode == Mode.NONE && k != stopAt) {
             return;
@@ -124,6 +140,10 @@ final class GameRecorder {
             reply.add("steps", checksumsOnly());
             return;
         }
+        if (stopAt >= 0) {
+            // the game ended before reaching the step: say so, with the full record of what there was
+            reply.addProperty("stop_not_reached", true);
+        }
         if (mode == Mode.NONE) {
             return;
         }
@@ -141,10 +161,10 @@ final class GameRecorder {
         reply.add("record", record);
     }
 
-    /** For a stop: the steps reached, without events, so the caller can compare checksums. */
+    /** For a stop: steps 0..stop_at, without events, so the caller can compare checksums. */
     private JsonArray checksumsOnly() {
         final JsonArray out = new JsonArray();
-        for (int i = 0; i < steps.size(); i++) {
+        for (int i = 0; i < steps.size() && i <= stopAt; i++) {
             final JsonObject s = steps.get(i).getAsJsonObject();
             final JsonObject c = new JsonObject();
             c.add("step", s.get("step"));

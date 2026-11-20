@@ -42,12 +42,19 @@ public final class Main {
         final BufferedReader in = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8));
         final Protocol protocol = new Protocol(in, protocolOut);
 
-        final long t0 = System.nanoTime();
-        GuiBase.setInterface(new GuiDesktop());
-        FModel.initialize(null, null);
-        protocol.ready(BuildInfo.getVersionString(), (System.nanoTime() - t0) / 1_000_000, repeatable());
-        protocol.serve();
-        System.exit(0);   // Forge leaves non-daemon threads behind
+        int status = 1;
+        try {
+            final long t0 = System.nanoTime();
+            GuiBase.setInterface(new GuiDesktop());
+            FModel.initialize(null, null);
+            protocol.ready(BuildInfo.getVersionString(), (System.nanoTime() - t0) / 1_000_000, repeatable());
+            protocol.serve();
+            status = 0;
+        } catch (Throwable t) {
+            t.printStackTrace();   // start-up failed, or stdin broke: VisionSort sees the process end
+        } finally {
+            System.exit(status);   // always: Forge leaves non-daemon threads behind that would keep the JVM up
+        }
     }
 
     /**

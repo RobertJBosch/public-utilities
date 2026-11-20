@@ -25,7 +25,9 @@ import com.google.gson.JsonParser;
  *   {"cmd":"quit"}                    -> the process ends
  *
  * On start-up, before any request: {"type":"ready","forge":"2.0.16","startup_ms":...,"repeatable":true}.
- * A request that fails gets {"type":"error","message":...}; the bridge keeps serving.
+ * A request that fails gets {"type":"error","message":...}; the bridge keeps serving. A reply with
+ * "restart_required" (a game thread that wouldn't stop, or the JVM out of memory) is the last one:
+ * the process exits after it, and VisionSort starts a new bridge.
  */
 final class Protocol {
     private final BufferedReader in;
@@ -60,11 +62,24 @@ final class Protocol {
                 final String cmd = req.has("cmd") ? req.get("cmd").getAsString() : "";
                 switch (cmd) {
                     case "ping" -> send(message("pong", req));
-                    case "play" -> send(PlayCommand.run(req, message("result", req)));
+                    case "play" -> {
+                        final JsonObject result = PlayCommand.run(req, message("result", req));
+                        send(result);
+                        if (result.has("restart_required")) {
+                            return;   // a game thread wouldn't stop: end the process, VisionSort starts a new one
+                        }
+                    }
                     case "quit" -> { return; }
                     default -> send(error(req, "Unknown command: " + cmd));
                 }
-            } catch (Exception | StackOverflowError e) {
+            } catch (VirtualMachineError e) {
+                // out of memory and the like: the process can't be trusted for another game
+                e.printStackTrace();
+                final JsonObject m = error(req, e.getClass().getSimpleName() + ": " + e.getMessage());
+                m.addProperty("restart_required", true);
+                send(m);
+                return;
+            } catch (Throwable e) {   // any other failure (assertion, linkage, a card script) fails this request only
                 e.printStackTrace();
                 send(error(req, e.getClass().getSimpleName() + ": " + e.getMessage()));
             }
