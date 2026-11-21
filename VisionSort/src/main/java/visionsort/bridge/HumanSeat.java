@@ -116,6 +116,7 @@ final class HumanSeat {
     private static final Field MANA_COST;
     private static final Field PAID_FOR;
     private static final Field TO_RETURN;
+    private static final Field PHY_LIFE;
     static {
         try {
             IS_FINISHED = InputBase.class.getDeclaredMethod("isFinished");
@@ -130,6 +131,8 @@ final class HumanSeat {
             PAID_FOR.setAccessible(true);
             TO_RETURN = InputLondonMulligan.class.getDeclaredField("toReturn");
             TO_RETURN.setAccessible(true);
+            PHY_LIFE = InputPayMana.class.getDeclaredField("phyLifeToLose");
+            PHY_LIFE.setAccessible(true);
         } catch (ReflectiveOperationException e) {
             throw new ExceptionInInitializerError(e);   // a Forge version whose inputs changed: the bridge can't seat a human
         }
@@ -158,6 +161,7 @@ final class HumanSeat {
     private String complaint;
     private boolean awaitingAsync;        // Auto pay runs on a game thread: its result comes later
     private String prompt = "";
+    private Input noMoreLife;             // a payment that didn't take another 2 life: don't offer it again
     private final String[] buttons = {"", ""};
     private final boolean[] enabled = {false, false};
     // mulligans and practice
@@ -207,6 +211,9 @@ final class HumanSeat {
         // Walking back comes from VisionSort's replays instead.
         FModel.getPreferences().setPref(FPref.UI_UNDO_MODE, ForgeConstants.UNDO_MODE_OFF);
         FModel.getPreferences().setPref(FPref.UI_MANA_LOST_PROMPT, false);
+        // with this on, scry goes through manipulateCardList (a drag-and-drop list); off, it asks which cards go
+        // to the bottom and in what order (many / order), which the protocol has
+        FModel.getPreferences().setPref(FPref.UI_SELECT_FROM_CARD_DISPLAYS, false);
         // A new input's decision is built when the input shows its prompt (Gui.showPromptMessage): only then
         // are its buttons and selection set. Watching the input queue instead races Forge's own prompt update.
     }
@@ -589,6 +596,15 @@ final class HumanSeat {
                     awaitingAsync = busy(in);          // paying on a game thread: its prompt says when it's done
                     return null;
                 }
+                if (a.has("life")) {
+                    final int before = lifeToLose(in);
+                    in.selectPlayer(me, null);         // Forge's own way: click your life total
+                    if (lifeToLose(in) == before) {
+                        noMoreLife = in;                // seen: offering it again looped
+                        return "You can't pay life for this now";
+                    }
+                    return null;
+                }
                 if (a.has("pool")) {
                     ((InputPayMana) in).useManaFromPool(MagicColor.fromName(a.get("pool").getAsString()));
                     return null;
@@ -851,7 +867,20 @@ final class HumanSeat {
         f.add("pool", pool);
         f.addProperty("auto", enabled[0] && !buttons[0].isEmpty());
         f.addProperty("can_cancel", enabled[1]);
+        final boolean lifeForMana = cost.containsPhyrexianMana()
+                || (me.hasKeyword("PayLifeInsteadOf:B") && cost.hasAnyKind(forge.card.mana.ManaAtom.BLACK));
+        // Forge adds up the life to pay (phyLifeToLose) and takes another 2 only if you can pay the total
+        f.addProperty("can_pay_life", lifeForMana && in != noMoreLife
+                && me.canPayLife(lifeToLose(in) + 2, false, paidFor));
         send("pay_mana", "Pay " + costText + (host == null ? "" : " for " + host.getName()), f, in, List.of(), null, reuse);
+    }
+
+    private static int lifeToLose(final Input in) {
+        try {
+            return in instanceof InputPayMana ? PHY_LIFE.getInt(in) : 0;
+        } catch (IllegalAccessException e) {
+            return 0;
+        }
     }
 
     private void mulligan(final Input in, final int reuse) {
@@ -1177,6 +1206,63 @@ final class HumanSeat {
         return a == null || a.has("cancel") ? null : a.get("number").getAsInt();
     }
 
+    /** Dividing an amount among targets (damage, counters, shields): the "divide" decision. "auto": as even as it
+     *  goes, the first targets getting what's left over. */
+    private Map<Object, Integer> divide(final CardView source, final Map<Object, Integer> target, final int amount,
+            final boolean atLeastOne, final String label) {
+        final List<Object> keys = new ArrayList<>(target.keySet());
+        final int floor = atLeastOne ? 1 : 0;
+        final JsonArray opts = new JsonArray();
+        keys.forEach(k -> opts.add(option(k)));
+        final JsonObject f = new JsonObject();
+        if (source != null) {
+            f.addProperty("card", source.getId());
+        }
+        f.add("options", opts);
+        f.addProperty("amount", amount);
+        f.addProperty("at_least_one", atLeastOne);
+        final String what = label == null || label.isBlank() ? "" : " " + label;
+        final JsonObject a = keys.size() <= 1 ? null : ask("divide",
+                "Divide " + amount + what + (source == null ? "" : " from " + source.getName()), f, x -> {
+                    if (x.has("auto")) {
+                        return null;
+                    }
+                    if (!x.has("divide")) {
+                        return "Divide the amount";
+                    }
+                    int sum = 0;
+                    final Set<Integer> seen = new java.util.HashSet<>();
+                    for (final JsonElement e : x.getAsJsonArray("divide")) {
+                        final int i = e.getAsJsonArray().get(0).getAsInt();
+                        final int n = e.getAsJsonArray().get(1).getAsInt();
+                        if (i < 0 || i >= keys.size() || !seen.add(i) || n < floor) {
+                            return atLeastOne ? "Give each target at least 1" : "Divide it among the targets";
+                        }
+                        sum += n;
+                    }
+                    if (atLeastOne && seen.size() < keys.size()) {
+                        return "Give each target at least 1";
+                    }
+                    return sum == amount ? null : "Divide all " + amount;
+                });
+        final Map<Object, Integer> out = new java.util.LinkedHashMap<>();
+        if (a == null || a.has("auto")) {
+            int left = amount;
+            for (int i = 0; i < keys.size(); i++) {
+                final int even = amount / keys.size() + (i < amount % keys.size() ? 1 : 0);
+                final int n = Math.min(left, Math.max(floor, even));
+                out.put(keys.get(i), n);
+                left -= n;
+            }
+            return out;
+        }
+        keys.forEach(k -> out.put(k, 0));
+        for (final JsonElement e : a.getAsJsonArray("divide")) {
+            out.put(keys.get(e.getAsJsonArray().get(0).getAsInt()), e.getAsJsonArray().get(1).getAsInt());
+        }
+        return out;
+    }
+
     /** Forge's GUI interface, as the play protocol. */
     private final class Gui extends AbstractGuiGame {
         @Override
@@ -1312,19 +1398,24 @@ final class HumanSeat {
         public <T> OrderResult<T> order(final String title, final String top, final int remainingObjectsMin,
                 final int remainingObjectsMax, final List<T> sourceChoices, final List<T> destChoices,
                 final CardView referenceCard, final boolean sideboardingMode, final boolean showRememberCheckbox) {
-            if (sourceChoices.size() <= 1) {
-                final List<T> all = new ArrayList<>(sourceChoices);
-                if (destChoices != null) {
-                    all.addAll(destChoices);
-                }
-                return new OrderResult<>(all, false);
+            // Forge's dual list: cards move from the source to the result, and remainingObjectsMin / Max bound
+            // how many stay behind (-1: no bound). 0 / 0 means all of them, in order; anything else is a choice of
+            // which to move, in order (many() comes here: scry's "cards to put on the bottom"). Treating every
+            // call as "order them all" moved every scried card to the bottom.
+            final List<T> result = new ArrayList<>(destChoices == null ? List.of() : destChoices);
+            final int n = sourceChoices.size();
+            final int minMove = remainingObjectsMax < 0 ? 0 : Math.max(0, n - remainingObjectsMax);
+            final int maxMove = remainingObjectsMin < 0 ? n : Math.max(0, n - remainingObjectsMin);
+            if (maxMove == 0) {
+                return new OrderResult<>(result, false);
             }
-            final List<T> ordered = choose(title + (top == null ? "" : " (first = " + top + ")"), sourceChoices.size(),
-                    sourceChoices.size(), sourceChoices, null, true);
-            if (destChoices != null) {
-                ordered.addAll(destChoices);
+            if (minMove == n && n == 1) {
+                result.addAll(sourceChoices);
+                return new OrderResult<>(result, false);
             }
-            return new OrderResult<>(ordered, false);
+            final String text = minMove == n && top != null ? title + " (the first is " + top + ")" : title;
+            result.addAll(choose(text, minMove, maxMove, sourceChoices, null, true));
+            return new OrderResult<>(result, false);
         }
 
         @Override
@@ -1388,16 +1479,7 @@ final class HumanSeat {
         @Override
         public Map<Object, Integer> assignGenericAmount(final CardView effectSource, final Map<Object, Integer> target,
                 final int amount, final boolean atLeastOne, final String amountLabel) {
-            // dividing an effect's amount (damage, counters) among targets: as even as it goes, for now
-            final Map<Object, Integer> out = new java.util.LinkedHashMap<>();
-            final List<Object> keys = new ArrayList<>(target.keySet());
-            int left = amount;
-            for (int i = 0; i < keys.size(); i++) {
-                final int n = i == keys.size() - 1 ? left : Math.max(atLeastOne ? 1 : 0, amount / keys.size());
-                out.put(keys.get(i), Math.min(n, left));
-                left -= Math.min(n, left);
-            }
-            return out;
+            return divide(effectSource, target, amount, atLeastOne, amountLabel);
         }
     }
 }

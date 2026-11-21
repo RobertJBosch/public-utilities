@@ -51,6 +51,9 @@ and talks to it over stdin / stdout.
   `"replay"` (the recorded answers) plays the game again silently to where they run out, checking
   each decision's state checksum, then sends `resumed` (the state and the whole log) and goes on
   live. If the game went differently somewhere, it goes on live from there and says it wasn't exact.
+- 0.7.1: dividing an amount among targets (damage, counters, shields) is a decision ("divide"), a
+  phyrexian symbol can be paid with 2 life, and scry / surveil / "any number to the bottom" ask which
+  cards and in what order.
 
 The hooked controller is generated from Forge's jar, since Forge's ~115 decision methods change
 between releases. After upgrading Forge, regenerate it:
