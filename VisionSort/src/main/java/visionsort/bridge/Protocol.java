@@ -44,6 +44,8 @@ final class Protocol {
     // not leave the field out - otherwise passes look like decisions that never finished
     private final Gson gson = new com.google.gson.GsonBuilder().serializeNulls().create();
     private volatile HumanGame human;      // the game against you, while it runs
+    /** How long a game you've left gets to stop before the next one starts. */
+    private static final long LEFT_GAME_STOP_MS = 15_000;
 
     Protocol(final BufferedReader in, final PrintStream out) {
         this.in = in;
@@ -78,6 +80,9 @@ final class Protocol {
                         send(m);
                     }
                     case "play_human" -> {
+                        if (human != null && !human.over() && human.abandoned()) {
+                            human.awaitStop(LEFT_GAME_STOP_MS);      // a walk back: the game just left is stopping
+                        }
                         if (human != null && !human.over()) {
                             send(error(req, "A game against you is already running: end it first"));
                         } else {

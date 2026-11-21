@@ -47,6 +47,10 @@ and talks to it over stdin / stdout.
   reason. `concede`, `stops` (where you get priority) and `end` control the running game; one
   such game runs at a time. A practice option lets you redraw the opening hand for free before
   any mulligan. "ended" carries your answers, so the game can be replayed from its seed.
+- Walks back and resumes games against a person (0.7.0): the same `play_human` request with
+  `"replay"` (the recorded answers) plays the game again silently to where they run out, checking
+  each decision's state checksum, then sends `resumed` (the state and the whole log) and goes on
+  live. If the game went differently somewhere, it goes on live from there and says it wasn't exact.
 
 The hooked controller is generated from Forge's jar, since Forge's ~115 decision methods change
 between releases. After upgrading Forge, regenerate it:

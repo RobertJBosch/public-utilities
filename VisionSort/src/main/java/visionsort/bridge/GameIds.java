@@ -22,9 +22,11 @@ import forge.game.trigger.Trigger;
  * Forge numbers spell abilities, triggers, static abilities, replacement effects, stack entries and
  * games from counters that run for the whole process, and SpellAbility.hashCode is its number. So
  * a hash set of abilities iterates in an order that depends on how many objects every earlier game
- * made, and the AI walks such sets. Seen (bridge 0.6.0, Krenko v Uril seed 103): two identical
- * Goblin tokens attacked in the other order after other games - a different game from the same
- * seed - while the same game first in a fresh process matched itself.
+ * made, and the AI walks such sets.
+ *
+ * (Added in 0.6.0 for Krenko v Uril seed 103, where two identical Goblin tokens attacked in the
+ * other order after other games. That turned out to be the AI's parallel attack evaluation - see
+ * Main.repeatable() - but the counters do depend on the games before, so they're reset all the same.)
  *
  * Before each game the counters go back to the same values, so a game is the same whatever ran
  * before it in the process. The card abilities Forge makes outside games (loading its card

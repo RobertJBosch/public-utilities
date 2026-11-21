@@ -66,9 +66,16 @@ public final class Main {
      * hashes and a later game can play out differently (seen: seed 101 replayed after three other
      * games split at line 453 of 505). -XX:hashCode=2 gives every object the same identity hash, so
      * set orders depend only on what was put in them: then every game repeats, first or fiftieth.
+     *
+     * Forge's AI also weighs its attackers on a thread pool with one thread per processor
+     * (AiAttackController.declareAttackers) and collects them in the order the threads finish, so a
+     * busy machine changes the order, and sometimes the attack. Seen: Krenko v Uril seed 103 gave
+     * three different games in 8 fresh processes (bridge 0.5.0 too); with -XX:ActiveProcessorCount=1
+     * all 8 were the same, and Forge still starts in ~30 s. It's the only parallel code in Forge's game
+     * and AI.
      */
     static boolean repeatable() {
-        return java.lang.management.ManagementFactory.getRuntimeMXBean().getInputArguments()
-                .contains("-XX:hashCode=2");
+        final java.util.List<String> args = java.lang.management.ManagementFactory.getRuntimeMXBean().getInputArguments();
+        return args.contains("-XX:hashCode=2") && Runtime.getRuntime().availableProcessors() == 1;
     }
 }

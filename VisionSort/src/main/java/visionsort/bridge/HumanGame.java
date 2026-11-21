@@ -61,6 +61,15 @@ import forge.util.MyRandom;
  *   {"cmd":"stops", "game":"h1", "mine":[...], ...}       where you get priority with an empty stack
  *   {"cmd":"end", "game":"h1"}                            leave: the game is abandoned, nothing follows
  *
+ * Walking back and resuming replay a game: the same request with "replay": the answers an earlier
+ * game recorded (its "ended" answers, or VisionSort's own record of them, stops changes included),
+ * "ids_from": the first decision id to use (so an old decision can't be answered by mistake) and
+ * "walked_back": true for a walk back (it makes the game practice; resuming a save doesn't). The
+ * replayed decisions aren't sent: when the answers run out, or one doesn't fit the game any more,
+ * {"type":"resumed", "at": answers replayed, "exact": all fitted, "state", "log": the whole game
+ * log so far} comes, then the game goes on live. Every decision carries "checksum", the whole
+ * state's (StateSnapshot, libraries included), which is how a replay knows it's on track.
+ *
  * The AI seats are set up exactly as in PlayCommand (skills, mistakes, look-ahead), seeded the
  * same way, so a game is a pure function of its seed, decks, settings and your answers: "ended"
  * carries the answers, for replaying it. There's no game time limit (you may think), and the AI's
@@ -193,8 +202,14 @@ final class HumanGame {
             }
         }
         final HumanSeat s = new HumanSeat(this, game, human, this::send, showHands, redraws);
-        s.setStops(req.has("stops") ? req.getAsJsonObject("stops") : defaultStops());
+        s.setStops(req.has("stops") ? req.getAsJsonObject("stops") : defaultStops(), false);
         s.attach((PlayerControllerHuman) human.getController());
+        final boolean walkedBack = req.has("walked_back") && req.get("walked_back").getAsBoolean();
+        s.setReplay(req.has("replay") ? req.getAsJsonArray("replay") : new JsonArray(),
+                req.has("ids_from") ? req.get("ids_from").getAsInt() : 1, walkedBack || req.has("replay"));
+        if (walkedBack) {
+            s.practiceUsed = true;                      // walking back is a practice option
+        }
         seat = s;
     }
 
@@ -253,6 +268,7 @@ final class HumanGame {
             send("failed", m);
             return;
         }
+        seat.endReplayQuietly();                        // a replay that reached the game's end
         flush();
         final GameOutcome outcome = game.getOutcome();
         final JsonObject m = new JsonObject();
@@ -320,7 +336,7 @@ final class HumanGame {
         }
         switch (cmd) {
             case "answer" -> seat.answer(req);
-            case "stops" -> seat.setStops(req);
+            case "stops" -> seat.setStops(req, true);
             case "concede" -> {
                 seat.abort();
                 SwingUtilities.invokeLater(() -> ((PlayerControllerHuman) human.getController()).concede());
@@ -338,10 +354,21 @@ final class HumanGame {
         abandoned = true;
         seat.abort();
         game.setGameOver(GameEndReason.Draw);
+        // releasing the inputs is enough: the game loop stops at the game over. Interrupting the thread made
+        // Forge report a crash (InterruptedException in awaitInput) while it stopped.
         ((PlayerControllerHuman) human.getController()).getInputQueue().onGameOver(true);
+    }
+
+    /** Wait for a game that was left to finish stopping (a walk back starts the next one right away). */
+    boolean awaitStop(final long ms) throws InterruptedException {
         if (thread != null) {
-            thread.interrupt();
+            thread.join(ms);
         }
+        return over;
+    }
+
+    boolean abandoned() {
+        return abandoned;
     }
 
     // --- what the seats call ---------------------------------------------------------------------------------
@@ -369,7 +396,7 @@ final class HumanGame {
 
     /** An AI seat is about to decide (DecisionHook, on the game thread): show what happened, and that it's thinking. */
     private void aiDecides(final String seatName, final String decision) {
-        if (over) {
+        if (over || seat == null || seat.quiet()) {
             return;
         }
         flush();
@@ -395,11 +422,17 @@ final class HumanGame {
 
     /** Send an update if anything happened since the last message. */
     synchronized void flush() {
+        if (seat != null && seat.quiet()) {
+            while (events.size() > 0) {                  // a replay: "resumed" shows where it got to
+                events.remove(0);
+            }
+            return;
+        }
         final List<GameLogEntry> entries = new ArrayList<>(game.getGameLog().getLogEntries(null));   // newest first
         final JsonArray log = new JsonArray();
         final List<String> fresh = new ArrayList<>();
         for (int i = 0; i < entries.size() - logSeen; i++) {
-            fresh.add(entries.get(i).message());
+            fresh.add(yours(entries.get(i).message()));
         }
         logSeen = entries.size();
         Collections.reverse(fresh);
@@ -417,6 +450,39 @@ final class HumanGame {
             events.remove(0);
         }
         send("update", m);
+    }
+
+    /** A replay has reached the point to go on from: the state and the whole log so far. */
+    synchronized void resumed(final int at, final boolean exact) {
+        final List<GameLogEntry> entries = new ArrayList<>(game.getGameLog().getLogEntries(null));   // newest first
+        logSeen = entries.size();
+        Collections.reverse(entries);
+        final JsonArray log = new JsonArray();
+        entries.forEach(e -> log.add(yours(e.message())));
+        notes.forEach(log::add);
+        notes.clear();
+        while (events.size() > 0) {
+            events.remove(0);
+        }
+        final JsonObject m = new JsonObject();
+        m.addProperty("at", at);
+        m.addProperty("exact", exact);
+        m.add("state", state());
+        m.add("log", log);
+        send("resumed", m);
+    }
+
+    /** Forge's log names your seat "You" in third-person sentences ("You has mulliganed down to 6 cards"). */
+    static String yours(final String line) {
+        if (line == null || !line.contains("You")) {
+            return line;
+        }
+        return line.replaceAll("\\bYou has\\b", "You have").replaceAll("\\bYou is\\b", "You are")
+                .replaceAll("\\bYou was\\b", "You were").replaceAll("\\bYou's\\b", "Your")
+                .replaceAll("\\bYou searches\\b", "You search").replaceAll("\\bYou scries\\b", "You scry")
+                .replaceAll("\\bYou (draw|play|cast|activate|discard|lose|gain|control|put|reveal|choose|attack|"
+                        + "block|shuffle|sacrifice|return|exile|mill|keep|take|pay|create|tap|untap|surveil|"
+                        + "mulligan)s\\b", "You $1");
     }
 
     private void send(final String type, final JsonObject fields) {

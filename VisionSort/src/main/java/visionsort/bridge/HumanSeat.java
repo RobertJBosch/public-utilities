@@ -58,6 +58,7 @@ import forge.gamemodes.match.input.InputBlock;
 import forge.gamemodes.match.input.InputConfirm;
 import forge.gamemodes.match.input.InputConfirmMulligan;
 import forge.gamemodes.match.input.InputLockUI;
+import forge.gamemodes.match.input.InputLondonMulligan;
 import forge.gamemodes.match.input.InputPassPriority;
 import forge.gamemodes.match.input.InputPayMana;
 import forge.gamemodes.match.input.InputSelectTargets;
@@ -100,7 +101,7 @@ final class HumanSeat {
 
     /** What the open decision is about, to apply its answer. */
     private record Pending(int id, String kind, Input input, List<Object> options, JsonObject decision,
-            CompletableFuture<JsonObject> reply) {}
+            CompletableFuture<JsonObject> reply, String checksum) {}
 
     private static final ZoneType[] ACTION_ZONES = {ZoneType.Hand, ZoneType.Battlefield, ZoneType.Command,
             ZoneType.Graveyard, ZoneType.Exile};
@@ -114,6 +115,7 @@ final class HumanSeat {
     private static final Method IS_BUSY;
     private static final Field MANA_COST;
     private static final Field PAID_FOR;
+    private static final Field TO_RETURN;
     static {
         try {
             IS_FINISHED = InputBase.class.getDeclaredMethod("isFinished");
@@ -126,6 +128,8 @@ final class HumanSeat {
             MANA_COST.setAccessible(true);
             PAID_FOR = InputPayMana.class.getDeclaredField("saPaidFor");
             PAID_FOR.setAccessible(true);
+            TO_RETURN = InputLondonMulligan.class.getDeclaredField("toReturn");
+            TO_RETURN.setAccessible(true);
         } catch (ReflectiveOperationException e) {
             throw new ExceptionInInitializerError(e);   // a Forge version whose inputs changed: the bridge can't seat a human
         }
@@ -161,6 +165,12 @@ final class HumanSeat {
     private volatile boolean redrawRequested;
     volatile boolean practiceUsed;
     private final JsonArray answers = new JsonArray();
+    // replaying a recorded game (walk back, resume): answers fed in silently until they run out
+    private final java.util.ArrayDeque<JsonObject> replay = new java.util.ArrayDeque<>();
+    private volatile boolean replaying;
+    private volatile boolean resumePending;   // the replay is over: say so before the next live message
+    private int replayed;
+    private boolean exact = true;
 
     HumanSeat(final HumanGame owner, final Game game, final Player me, final Sink sink, final boolean showHands,
             final boolean redraws) {
@@ -209,7 +219,21 @@ final class HumanSeat {
         return answers;
     }
 
-    void setStops(final JsonObject s) {
+    /** Where you get priority. record: a change made during the game, kept in the answers in order, since
+     *  it changes which decisions come next (a replay applies it at the same point). */
+    void setStops(final JsonObject s, final boolean record) {
+        if (record) {
+            final JsonObject r = new JsonObject();
+            for (final String k : new String[] {"mine", "theirs", "ai_spells"}) {
+                if (s.has(k)) {
+                    r.add(k, s.get(k));
+                }
+            }
+            r.addProperty("kind", "stops");
+            synchronized (this) {
+                answers.add(r);
+            }
+        }
         stopsMine = phases(s.has("mine") ? s.getAsJsonArray("mine") : null);
         stopsTheirs = phases(s.has("theirs") ? s.getAsJsonArray("theirs") : null);
         aiSpells = !s.has("ai_spells") || s.get("ai_spells").getAsBoolean();
@@ -227,6 +251,63 @@ final class HumanSeat {
             }
         }
         return out;
+    }
+
+    /** Replay these recorded answers (the "answers" an earlier game ended with, or VisionSort's own record
+     *  of them): each is checked against the decision it answers - same kind, same state checksum - and
+     *  given silently. When they run out, or one doesn't fit (the game went differently), "resumed" says
+     *  how many were replayed and whether all fitted, and the game goes on live from there. */
+    void setReplay(final JsonArray entries, final int firstId, final boolean announce) {
+        nextId = Math.max(0, firstId - 1);
+        for (final JsonElement e : entries) {
+            replay.add(e.getAsJsonObject().deepCopy());
+        }
+        replaying = !replay.isEmpty();
+        resumePending = !replaying && announce;        // a walk back to the first decision still says so
+        drainStops();
+    }
+
+    /** Messages other than the replay's end are held back while replaying. */
+    boolean quiet() {
+        return replaying || resumePending;
+    }
+
+    int replayed() {
+        return replayed;
+    }
+
+    boolean exact() {
+        return exact;
+    }
+
+    void endReplayQuietly() {
+        if (resumePending || replaying) {
+            replay.clear();
+            replaying = false;
+            resumePending = false;
+            owner.resumed(replayed, exact);
+        }
+    }
+
+    private void drainStops() {
+        while (!replay.isEmpty() && "stops".equals(str(replay.peekFirst(), "kind"))) {
+            setStops(replay.pollFirst(), true);
+        }
+        if (replaying && replay.isEmpty()) {
+            replaying = false;
+            resumePending = true;
+        }
+    }
+
+    private void drift() {
+        exact = false;
+        replay.clear();
+        replaying = false;
+        resumePending = true;
+    }
+
+    private static String str(final JsonObject o, final String key) {
+        return o.has(key) && !o.get(key).isJsonNull() ? o.get(key).getAsString() : null;
     }
 
     boolean takeRedraw() {
@@ -267,17 +348,47 @@ final class HumanSeat {
         d.addProperty("seat", seat());
         d.addProperty("prompt", text);
         fields.entrySet().forEach(e -> d.add(e.getKey(), e.getValue()));
+        final String checksum = StateSnapshot.checksum(StateSnapshot.of(game));   // the whole state, libraries too
+        d.addProperty("checksum", checksum);
+        owner.step();
+        if (replaying) {
+            final JsonObject next = replay.peekFirst();
+            final String want = next == null ? null : str(next, "checksum");
+            if (next != null && kind.equals(str(next, "kind")) && (want == null || want.equals(checksum))) {
+                replay.pollFirst();
+                replayed++;
+                final Pending p = new Pending(id, kind, input, options, d, reply, checksum);
+                pending = p;
+                final JsonObject a = next.deepCopy();
+                a.addProperty("decision", id);
+                drainStops();                          // a stops change made right after this answer
+                if (reply != null) {
+                    reply.complete(a);                  // a dialog: ask() takes it at once
+                } else {
+                    SwingUtilities.invokeLater(() -> apply(p, a));
+                }
+                return id;
+            }
+            drift();                                   // not the decision that was answered then: live from here
+        }
+        if (resumePending) {
+            resumePending = false;
+            owner.resumed(replayed, exact);
+        }
         owner.flush();                                // what happened first, then what to decide
         final JsonObject m = new JsonObject();
         m.add("state", owner.state());
         m.add("decision", d);
-        pending = new Pending(id, kind, input, options, d, reply);
-        owner.step();
+        pending = new Pending(id, kind, input, options, d, reply, checksum);
         sink.send("decision", m);
         return id;
     }
 
     private void refuse(final int id, final String reason) {
+        if (replaying) {
+            drift();                                   // a recorded answer this game won't take: live from here
+            return;
+        }
         final JsonObject m = new JsonObject();
         m.addProperty("decision", id);
         m.addProperty("reason", reason);
@@ -289,7 +400,11 @@ final class HumanSeat {
         r.remove("cmd");
         r.remove("game");
         r.addProperty("kind", p.kind());
-        answers.add(r);
+        r.addProperty("checksum", p.checksum());
+        r.remove("decision");
+        synchronized (this) {
+            answers.add(r);
+        }
     }
 
     /** Ask a dialog decision and wait for an answer `check` accepts (null = accepted). */
@@ -383,6 +498,8 @@ final class HumanSeat {
             payMana(pm, reuse);
         } else if (in instanceof InputConfirmMulligan) {
             mulligan(in, reuse);
+        } else if (in instanceof InputLondonMulligan) {
+            bottom(in, reuse);
         } else if (in instanceof InputAttack) {
             attackers(in, reuse);
         } else if (in instanceof InputBlock) {
@@ -746,6 +863,28 @@ final class HumanSeat {
         f.addProperty("redraw", redraws && mulligans == 0);
         send("mulligan", mulligans == 0 ? "Keep this hand?" : "Keep this hand? (mulligans: " + mulligans + ")",
                 f, in, List.of(), null, reuse);
+    }
+
+    /** London mulligan: which cards go to the bottom. Forge asks right after the new hand is drawn, before
+     *  keep / mulligan. Its input lists no selectable cards (Selection has only what's chosen), so the
+     *  hand is offered here. Seen: the general fallback showed it as a confirm with only "Auto". */
+    private void bottom(final Input in, final int reuse) {
+        final int n;
+        try {
+            n = TO_RETURN.getInt(in);
+        } catch (IllegalAccessException e) {
+            throw new IllegalStateException(e);
+        }
+        final List<Object> hand = new ArrayList<>(me.getCardsIn(ZoneType.Hand));
+        final JsonArray opts = new JsonArray();
+        hand.forEach(c -> opts.add(option(c)));
+        final JsonObject f = new JsonObject();
+        f.add("options", opts);
+        f.addProperty("min", n);
+        f.addProperty("max", n);
+        f.addProperty("ordered", false);
+        f.addProperty("can_cancel", false);
+        send("choose", "Put " + n + (n == 1 ? " card" : " cards") + " on the bottom of your library", f, in, hand, null, reuse);
     }
 
     private void attackers(final Input in, final int reuse) {
