@@ -29,6 +29,7 @@ import com.google.gson.JsonParser;
  *   {"cmd":"play", ...}               -> {"type":"result", ...}   (see {@link PlayCommand})
  *   {"cmd":"play_human", ...}         -> {"type":"started", ...}, then the game's messages until
  *                                        "ended" (see {@link HumanGame}); one such game at a time
+ *   {"cmd":"watch", ...}              -> an AI game streamed like play_human, for the table (see HumanGame)
  *   {"cmd":"answer" | "concede" | "stops" | "end", "game":...}   to the running play_human game
  *   {"cmd":"quit"}                    -> the process ends
  *
@@ -78,6 +79,18 @@ final class Protocol {
                         final JsonObject m = message("profiles", req);
                         Skills.catalogue().entrySet().forEach(x -> m.add(x.getKey(), x.getValue()));
                         send(m);
+                    }
+                    case "watch" -> {
+                        if (human != null && !human.over() && human.abandoned()) {
+                            human.awaitStop(LEFT_GAME_STOP_MS);
+                        }
+                        if (human != null && !human.over()) {
+                            send(error(req, "A game is already running: end it first"));
+                        } else {
+                            human = HumanGame.create(req, this::send, true);
+                            send(human.started(message("started", req)));
+                            human.start();
+                        }
                     }
                     case "play_human" -> {
                         if (human != null && !human.over() && human.abandoned()) {

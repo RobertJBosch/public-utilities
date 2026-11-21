@@ -61,6 +61,11 @@ import forge.util.MyRandom;
  *   {"cmd":"stops", "game":"h1", "mine":[...], ...}       where you get priority with an empty stack
  *   {"cmd":"end", "game":"h1"}                            leave: the game is abandoned, nothing follows
  *
+ * Watching (bridge 0.9.0): {"cmd":"watch"} is the same request with only AI seats, "viewer" (the seat
+ * whose side the table shows, default 0) and "show_hands" (default true). Nobody answers anything: the
+ * game streams "started", an "update" at each of the AIs' decisions (whenever something happened), and
+ * "ended" - a Test game played again for the table to step through. Only "end" applies to it.
+ *
  * Walking back and resuming replay a game: the same request with "replay": the answers an earlier
  * game recorded (its "ended" answers, or VisionSort's own record of them, stops changes included),
  * "ids_from": the first decision id to use (so an old decision can't be answered by mistake) and
@@ -93,8 +98,11 @@ final class HumanGame {
     private long seed;
     private Match match;
     private Game game;
-    private Player human;
-    private volatile HumanSeat seat;
+    private Player human;                         // null when watching
+    private Player viewer;                        // whose side the state shows (the human, or "viewer")
+    private boolean watching;
+    private boolean showAll;                      // watching: every hand shown
+    private volatile HumanSeat seat;              // null when watching
     private volatile Player forced;
     private Thread thread;
     private volatile boolean over;
@@ -107,7 +115,13 @@ final class HumanGame {
 
     /** Set the game up (decks loaded, seats made); start() then plays it. */
     static HumanGame create(final JsonObject req, final Consumer<JsonObject> out) throws Exception {
+        return create(req, out, false);
+    }
+
+    /** watching: only AI seats, nobody answers (a Test game replayed for the table). */
+    static HumanGame create(final JsonObject req, final Consumer<JsonObject> out, final boolean watching) throws Exception {
         final HumanGame g = new HumanGame(out);
+        g.watching = watching;
         try {
             g.setUp(req);
         } catch (Exception | Error e) {
@@ -137,9 +151,13 @@ final class HumanGame {
                 humans++;
             }
         }
-        if (humans != 1) {
+        if (!watching && humans != 1) {
             throw new IllegalArgumentException("A play_human game seats exactly one human, not " + humans);
         }
+        if (watching && humans != 0) {
+            throw new IllegalArgumentException("A watched game has only AI seats");
+        }
+        showAll = !req.has("show_hands") || req.get("show_hands").getAsBoolean();
 
         final GameRules rules = new GameRules(type);
         rules.setAppliedVariants(EnumSet.of(type));
@@ -201,6 +219,15 @@ final class HumanGame {
                 forced = p;
             }
         }
+        if (watching) {
+            final int v = req.has("viewer") ? req.get("viewer").getAsInt() : 0;
+            if (v < 0 || v >= game.getRegisteredPlayers().size()) {
+                throw new IllegalArgumentException("\"viewer\" must be a seat, not " + v);
+            }
+            viewer = game.getRegisteredPlayers().get(v);
+            return;
+        }
+        viewer = human;
         final HumanSeat s = new HumanSeat(this, game, human, this::send, showHands, redraws);
         s.setStops(req.has("stops") ? req.getAsJsonObject("stops") : defaultStops(), false);
         s.attach((PlayerControllerHuman) human.getController());
@@ -230,15 +257,16 @@ final class HumanGame {
     /** The reply to play_human: the protocol's "started". */
     JsonObject started(final JsonObject reply) {
         reply.addProperty("game", id);
-        reply.addProperty("you", seat.seat());
+        reply.addProperty("you", ViewState.seatOf(game.getRegisteredPlayers(), viewer));
         final JsonArray seats = new JsonArray();
         game.getRegisteredPlayers().forEach(p -> seats.add(p.getName()));
         reply.add("seats", seats);
         reply.addProperty("seed", seed);
         final JsonObject p = new JsonObject();
-        p.addProperty("redraws", seat.redraws);
-        p.addProperty("show_ai_hand", seat.showHands);
+        p.addProperty("redraws", seat != null && seat.redraws);
+        p.addProperty("show_ai_hand", seat != null ? seat.showHands : showAll);
         reply.add("practice", p);
+        reply.addProperty("watching", watching);
         return reply;
     }
 
@@ -256,7 +284,9 @@ final class HumanGame {
             failure = t;
         }
         over = true;
-        seat.abort();
+        if (seat != null) {
+            seat.abort();
+        }
         profiles.forEach(Skills::unregister);
         if (abandoned) {
             return;
@@ -268,7 +298,9 @@ final class HumanGame {
             send("failed", m);
             return;
         }
-        seat.endReplayQuietly();                        // a replay that reached the game's end
+        if (seat != null) {
+            seat.endReplayQuietly();                    // a replay that reached the game's end
+        }
         flush();
         final GameOutcome outcome = game.getOutcome();
         final JsonObject m = new JsonObject();
@@ -285,9 +317,9 @@ final class HumanGame {
         }
         m.addProperty("reason", reason(outcome));
         m.addProperty("turns", outcome == null ? game.getPhaseHandler().getTurn() : outcome.getLastTurnNumber());
-        m.addProperty("practice", seat.practiceUsed);
+        m.addProperty("practice", seat != null && seat.practiceUsed);
         m.add("state", state());
-        m.add("answers", seat.answers());
+        m.add("answers", seat != null ? seat.answers() : new JsonArray());
         send("ended", m);
     }
 
@@ -301,8 +333,8 @@ final class HumanGame {
             final Player winner = all.stream().filter(p -> p.getOutcome() != null && p.getOutcome().hasWon())
                     .findFirst().orElse(null);
             final String won = winner == null ? String.valueOf(outcome.getWinCondition())
-                    : winner.getId() == human.getId() ? "You won" : winner.getName() + " won";
-            final PlayerOutcome mine = human.getOutcome();
+                    : isYou(winner) ? "You won" : winner.getName() + " won";
+            final PlayerOutcome mine = human == null ? null : human.getOutcome();
             return mine != null && !mine.hasWon() && mine.lossState != null
                     ? won + " (you were out: " + lost(human, mine).replaceFirst("^You ", "you ").replaceFirst("^Your ", "your ") + ")"
                     : won;
@@ -325,8 +357,8 @@ final class HumanGame {
 
     private String lost(final Player p, final PlayerOutcome o) {
         {
-            final String who = p.getId() == human.getId() ? "You" : p.getName();
-            final boolean you = p.getId() == human.getId();
+            final boolean you = isYou(p);
+            final String who = you ? "You" : p.getName();
             return switch (o.lossState) {
                 case Conceded -> who + " conceded";
                 case LifeReachedZero -> (you ? "Your" : p.getName() + "'s") + " life total reached 0";
@@ -337,6 +369,10 @@ final class HumanGame {
                 default -> who + " lost (" + o.lossState + ")";
             };
         }
+    }
+
+    private boolean isYou(final Player p) {
+        return human != null && p.getId() == human.getId();
     }
 
     // --- commands from VisionSort ---------------------------------------------------------------------------
@@ -351,6 +387,9 @@ final class HumanGame {
     void command(final String cmd, final JsonObject req) {
         if (over) {
             return;
+        }
+        if (watching && !cmd.equals("end")) {
+            return;                                     // nothing to answer in a watched game
         }
         switch (cmd) {
             case "answer" -> seat.answer(req);
@@ -370,11 +409,13 @@ final class HumanGame {
             return;
         }
         abandoned = true;
-        seat.abort();
         game.setGameOver(GameEndReason.Draw);
-        // releasing the inputs is enough: the game loop stops at the game over. Interrupting the thread made
-        // Forge report a crash (InterruptedException in awaitInput) while it stopped.
-        ((PlayerControllerHuman) human.getController()).getInputQueue().onGameOver(true);
+        if (seat != null) {
+            seat.abort();
+            // releasing the inputs is enough: the game loop stops at the game over. Interrupting the thread made
+            // Forge report a crash (InterruptedException in awaitInput) while it stopped.
+            ((PlayerControllerHuman) human.getController()).getInputQueue().onGameOver(true);
+        }
     }
 
     /** Wait for a game that was left to finish stopping (a walk back starts the next one right away). */
@@ -403,7 +444,7 @@ final class HumanGame {
     }
 
     JsonObject state() {
-        return ViewState.of(game, human, seat.showHands, steps.get());
+        return ViewState.of(game, viewer, seat != null ? seat.showHands : showAll, steps.get());
     }
 
     synchronized void note(final String line) {
@@ -414,7 +455,12 @@ final class HumanGame {
 
     /** An AI seat is about to decide (DecisionHook, on the game thread): show what happened, and that it's thinking. */
     private void aiDecides(final String seatName, final String decision) {
-        if (over || seat == null || seat.quiet()) {
+        if (over || (seat == null && !watching) || (seat != null && seat.quiet())) {
+            return;
+        }
+        if (watching) {
+            flush();                                    // a frame for each of the AIs' decisions that changed something
+            steps.incrementAndGet();
             return;
         }
         flush();
