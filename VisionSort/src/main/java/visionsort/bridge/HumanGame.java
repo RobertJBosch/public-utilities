@@ -291,15 +291,40 @@ final class HumanGame {
         send("ended", m);
     }
 
+    /** Why the game ended. Two players: how the loser lost. More: who won, and how you went out if you did. */
     private String reason(final GameOutcome outcome) {
         if (outcome == null || outcome.isDraw()) {
             return "The game is a draw";
         }
-        for (final Player p : game.getRegisteredPlayers()) {
+        final List<Player> all = game.getRegisteredPlayers();
+        if (all.size() > 2) {
+            final Player winner = all.stream().filter(p -> p.getOutcome() != null && p.getOutcome().hasWon())
+                    .findFirst().orElse(null);
+            final String won = winner == null ? String.valueOf(outcome.getWinCondition())
+                    : winner.getId() == human.getId() ? "You won" : winner.getName() + " won";
+            final PlayerOutcome mine = human.getOutcome();
+            return mine != null && !mine.hasWon() && mine.lossState != null
+                    ? won + " (you were out: " + lost(human, mine).replaceFirst("^You ", "you ").replaceFirst("^Your ", "your ") + ")"
+                    : won;
+        }
+        for (final Player p : all) {
             final PlayerOutcome o = p.getOutcome();
             if (o == null || o.hasWon() || o.lossState == null) {
                 continue;
             }
+            return lost(p, o);
+        }
+        for (final Player p : all) {
+            final PlayerOutcome o = p.getOutcome();
+            if (o != null && o.altWinSourceName != null) {
+                return p.getName() + " won with " + o.altWinSourceName;
+            }
+        }
+        return String.valueOf(outcome.getWinCondition());
+    }
+
+    private String lost(final Player p, final PlayerOutcome o) {
+        {
             final String who = p.getId() == human.getId() ? "You" : p.getName();
             final boolean you = p.getId() == human.getId();
             return switch (o.lossState) {
@@ -312,13 +337,6 @@ final class HumanGame {
                 default -> who + " lost (" + o.lossState + ")";
             };
         }
-        for (final Player p : game.getRegisteredPlayers()) {
-            final PlayerOutcome o = p.getOutcome();
-            if (o != null && o.altWinSourceName != null) {
-                return p.getName() + " won with " + o.altWinSourceName;
-            }
-        }
-        return String.valueOf(outcome.getWinCondition());
     }
 
     // --- commands from VisionSort ---------------------------------------------------------------------------

@@ -938,7 +938,13 @@ final class HumanSeat {
     private void blockers(final Input in, final int reuse) {
         final Combat combat = game.getCombat();
         final JsonArray attackers = new JsonArray();
-        combat.getAttackers().forEach(c -> attackers.add(c.getId()));
+        for (final Card a : combat.getAttackers()) {
+            // with more players, only what attacks you (or your planeswalkers and battles) can be blocked by you
+            final Player defending = combat.getDefenderPlayerByAttacker(a);
+            if (defending == null || defending.getId() == me.getId()) {
+                attackers.add(a.getId());
+            }
+        }
         final JsonArray able = new JsonArray();
         for (final Card c : me.getCreaturesInPlay()) {
             if (CombatUtil.canBlock(c, combat)) {
