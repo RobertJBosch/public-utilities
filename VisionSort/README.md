@@ -58,6 +58,8 @@ and talks to it over stdin / stdout.
   who loses is out while the others play on, and "ended" names the winner and how you went out.
 - 0.9.0: `{"cmd":"watch"}` plays an AI-only game again and streams it like play_human (every hand
   shown), so a Test game can be stepped through on VisionSort's table.
+- 0.9.1: a confirmation or choice about a card says which ("card", "card_name"), e.g. scry 1's top or
+  bottom (the card is usually in the library, so not in the state).
 
 The hooked controller is generated from Forge's jar, since Forge's ~115 decision methods change
 between releases. After upgrading Forge, regenerate it:

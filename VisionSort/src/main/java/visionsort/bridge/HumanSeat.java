@@ -117,6 +117,8 @@ final class HumanSeat {
     private static final Field PAID_FOR;
     private static final Field TO_RETURN;
     private static final Field PHY_LIFE;
+    private static final Field CONFIRM_CARD;
+    private static final Field CONFIRM_SA;
     static {
         try {
             IS_FINISHED = InputBase.class.getDeclaredMethod("isFinished");
@@ -133,6 +135,10 @@ final class HumanSeat {
             TO_RETURN.setAccessible(true);
             PHY_LIFE = InputPayMana.class.getDeclaredField("phyLifeToLose");
             PHY_LIFE.setAccessible(true);
+            CONFIRM_CARD = InputConfirm.class.getDeclaredField("card");
+            CONFIRM_CARD.setAccessible(true);
+            CONFIRM_SA = InputConfirm.class.getDeclaredField("sa");
+            CONFIRM_SA.setAccessible(true);
         } catch (ReflectiveOperationException e) {
             throw new ExceptionInInitializerError(e);   // a Forge version whose inputs changed: the bridge can't seat a human
         }
@@ -970,7 +976,29 @@ final class HumanSeat {
         }
         final JsonObject f = new JsonObject();
         f.add("options", options);
+        final CardView about = confirmCard(in);
+        if (about != null) {
+            f.addProperty("card", about.getId());        // e.g. scry 1: "put X on the top or bottom?" shows X
+            f.addProperty("card_name", about.getName());   // the card is usually in your library: not in the state
+        }
         send("confirm", clean(prompt), f, in, which, null, reuse);
+    }
+
+    /** The card a confirmation is about: InputConfirm keeps it (or the ability whose card it is). */
+    private static CardView confirmCard(final Input in) {
+        if (!(in instanceof InputConfirm)) {
+            return null;
+        }
+        try {
+            final CardView card = (CardView) CONFIRM_CARD.get(in);
+            if (card != null) {
+                return card;
+            }
+            final SpellAbility sa = (SpellAbility) CONFIRM_SA.get(in);
+            return sa == null || sa.getHostCard() == null ? null : sa.getHostCard().getView();
+        } catch (IllegalAccessException e) {
+            return null;
+        }
     }
 
     private void pick(final Input in, final Selection sel, final String kind, final int reuse) {
@@ -1094,6 +1122,11 @@ final class HumanSeat {
 
     private <T> List<T> choose(final String text, final int min, final int max, final List<T> choices,
             final Function<T, String> display, final boolean ordered) {
+        return choose(text, min, max, choices, display, ordered, null);
+    }
+
+    private <T> List<T> choose(final String text, final int min, final int max, final List<T> choices,
+            final Function<T, String> display, final boolean ordered, final CardView card) {
         if (choices.isEmpty()) {
             return new ArrayList<>();
         }
@@ -1110,6 +1143,10 @@ final class HumanSeat {
         f.addProperty("min", min);
         f.addProperty("max", max);
         f.addProperty("ordered", ordered);
+        if (card != null) {
+            f.addProperty("card", card.getId());           // what the choice is for (order's reference card)
+            f.addProperty("card_name", card.getName());
+        }
         final JsonObject a = ask("choose", text, f, x -> picksProblem(x, choices.size(), min, max));
         final List<T> out = new ArrayList<>();
         if (a == null) {                                // the game ended: Forge's default, the first ones
@@ -1123,10 +1160,19 @@ final class HumanSeat {
     }
 
     private int buttonsDialog(final String text, final List<String> labels) {
+        return buttonsDialog(text, labels, null);
+    }
+
+    /** card: the card the question is about, when Forge names one (the table shows it with the buttons). */
+    private int buttonsDialog(final String text, final List<String> labels, final CardView card) {
         final JsonArray opts = new JsonArray();
         labels.forEach(opts::add);
         final JsonObject f = new JsonObject();
         f.add("options", opts);
+        if (card != null) {
+            f.addProperty("card", card.getId());
+            f.addProperty("card_name", card.getName());
+        }
         final JsonObject a = ask("confirm", text, f, x -> picksProblem(x, labels.size(), 1, 1));
         return a == null ? 0 : a.getAsJsonArray("picks").get(0).getAsInt();
     }
@@ -1376,7 +1422,7 @@ final class HumanSeat {
         @Override
         public boolean confirm(final CardView c, final String question, final boolean defaultIsYes,
                 final List<String> options) {
-            return buttonsDialog(question, options == null || options.size() < 2 ? List.of("Yes", "No") : options) == 0;
+            return buttonsDialog(question, options == null || options.size() < 2 ? List.of("Yes", "No") : options, c) == 0;
         }
 
         @Override
@@ -1420,7 +1466,7 @@ final class HumanSeat {
                 return new OrderResult<>(result, false);
             }
             final String text = minMove == n && top != null ? title + " (the first is " + top + ")" : title;
-            result.addAll(choose(text, minMove, maxMove, sourceChoices, null, true));
+            result.addAll(choose(text, minMove, maxMove, sourceChoices, null, true, referenceCard));
             return new OrderResult<>(result, false);
         }
 
