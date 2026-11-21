@@ -65,6 +65,8 @@ import forge.util.MyRandom;
  *    passes). It's set to the game's own timeout;
  *  - look-ahead searches are bounded by their counts, not by time (Skills);
  *  - the JVM runs with -XX:hashCode=2 (Main.repeatable()).
+ *  - Forge's process-wide object numbers start from the same values (GameIds), so a game doesn't
+ *    depend on the games before it in the process.
  *
  * The game runs on its own thread. If it outlives "timeout_s" it is ended as a draw and
  * interrupted; if its thread still won't stop, the reply says "restart_required" and the bridge
@@ -129,6 +131,7 @@ final class PlayCommand {
         final Set<String> names = new HashSet<>();
         final String gameTag = String.valueOf(GAMES.incrementAndGet());
 
+        GameIds.reset();                        // the same object numbers whatever ran before (GameIds)
         MyRandom.setRandom(new Random(seed));   // loading decks uses it: copies are spread over printings
         int i = 0;
         for (final JsonElement e : seats) {

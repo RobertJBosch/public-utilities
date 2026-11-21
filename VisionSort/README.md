@@ -37,6 +37,16 @@ and talks to it over stdin / stdout.
   was asked (`StateSnapshot`). `"stop_at": k` replays the same game to step k and returns the
   state there plus every checksum along the way. Games are a pure function of their seed, decks
   and settings, so the checksums match the recording exactly, in the same process or a new one.
+- Seats a person against the AI (`{"cmd":"play_human"}`, see `HumanGame.java`). The human seat is
+  Forge's own human player (`PlayerControllerHuman`), so Forge keeps every rule. Its GUI
+  (`HumanSeat`) turns everything Forge asks a player into a decision message: priority with the
+  actions you can take, paying mana, targets, attackers, blockers, confirmations, mulligans,
+  choices, numbers and dividing combat damage. Each decision carries the game as that player may
+  see it (`ViewState`). Answers come back as `{"cmd":"answer"}` and are applied the way a click
+  on Forge's own table would be. An answer Forge won't take comes back "refused", with its
+  reason. `concede`, `stops` (where you get priority) and `end` control the running game; one
+  such game runs at a time. A practice option lets you redraw the opening hand for free before
+  any mulligan. "ended" carries your answers, so the game can be replayed from its seed.
 
 The hooked controller is generated from Forge's jar, since Forge's ~115 decision methods change
 between releases. After upgrading Forge, regenerate it:

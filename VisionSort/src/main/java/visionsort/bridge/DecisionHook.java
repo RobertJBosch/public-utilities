@@ -52,6 +52,16 @@ public final class DecisionHook {
     private final String firstSeat;       // who plays first, or null for Forge's coin flip
     private int depth;
     private String topDecision = "";
+    private TopListener listener;      // a play game: show the table that the AI is thinking
+
+    /** Told when one of this seat's real top-level decisions starts, before the AI decides. */
+    interface TopListener {
+        void top(String seat, String decision);
+    }
+
+    void listen(final TopListener l) {
+        listener = l;
+    }
 
     DecisionHook(final String seat, final Policy policy, final JsonArray log, final boolean keepLog,
             final DecisionCounts counts, final GameRecorder recorder, final boolean lookahead,
@@ -74,6 +84,9 @@ public final class DecisionHook {
         }
         final int level = depth;   // 0 = top-level, 1 = asked while deciding something else, ...
         final boolean top = level == 0;
+        if (top && listener != null) {
+            listener.top(seat, decision);
+        }
         if (top) {
             recorder.step(game, seat, decision);   // the state as the decision is asked; may stop the game here
             topDecision = decision;

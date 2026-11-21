@@ -109,10 +109,18 @@ final class GameRecorder {
         if (mode == Mode.NONE) {
             return;
         }
+        final JsonObject e = describe(event);
+        if (e != null) {
+            pending.add(e);
+        }
+    }
+
+    /** A Forge event described generically from its record components; null for the redraw hints in SKIP. */
+    static JsonObject describe(final GameEvent event) {
         final Class<?> cls = event.getClass();
         final String name = cls.getSimpleName().replaceFirst("^GameEvent", "");
         if (SKIP.contains(name)) {
-            return;
+            return null;
         }
         final JsonObject e = new JsonObject();
         e.addProperty("event", name);
@@ -125,7 +133,7 @@ final class GameRecorder {
                 }
             }
         }
-        pending.add(e);
+        return e;
     }
 
     boolean stopped() {

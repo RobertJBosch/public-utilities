@@ -27,6 +27,9 @@ import com.google.gson.JsonParser;
  *                                        (every Forge AI setting with its explanation, and the
  *                                        values of Forge's profiles - see Skills.catalogue())
  *   {"cmd":"play", ...}               -> {"type":"result", ...}   (see {@link PlayCommand})
+ *   {"cmd":"play_human", ...}         -> {"type":"started", ...}, then the game's messages until
+ *                                        "ended" (see {@link HumanGame}); one such game at a time
+ *   {"cmd":"answer" | "concede" | "stops" | "end", "game":...}   to the running play_human game
  *   {"cmd":"quit"}                    -> the process ends
  *
  * On start-up, before any request: {"type":"ready","forge":"2.0.16","startup_ms":...,"repeatable":true}.
@@ -40,6 +43,7 @@ final class Protocol {
     // serializeNulls: a decision that chose nothing (a pass, a declined option) must say "chosen": null,
     // not leave the field out - otherwise passes look like decisions that never finished
     private final Gson gson = new com.google.gson.GsonBuilder().serializeNulls().create();
+    private volatile HumanGame human;      // the game against you, while it runs
 
     Protocol(final BufferedReader in, final PrintStream out) {
         this.in = in;
@@ -73,14 +77,44 @@ final class Protocol {
                         Skills.catalogue().entrySet().forEach(x -> m.add(x.getKey(), x.getValue()));
                         send(m);
                     }
+                    case "play_human" -> {
+                        if (human != null && !human.over()) {
+                            send(error(req, "A game against you is already running: end it first"));
+                        } else {
+                            human = HumanGame.create(req, this::send);
+                            send(human.started(message("started", req)));
+                            human.start();
+                        }
+                    }
+                    case "answer", "concede", "stops", "end" -> {
+                        final HumanGame g = human;
+                        if (g == null || g.over()) {
+                            if (!cmd.equals("end")) {
+                                send(error(req, "No game against you is running"));
+                            }
+                        } else if (req.has("game") && !req.get("game").getAsString().equals(g.id())) {
+                            send(error(req, "That game is over"));
+                        } else {
+                            g.command(cmd, req);
+                        }
+                    }
                     case "play" -> {
+                        if (human != null && !human.over()) {
+                            send(error(req, "A game against you is running: Forge plays one game at a time"));
+                            continue;
+                        }
                         final JsonObject result = PlayCommand.run(req, message("result", req));
                         send(result);
                         if (result.has("restart_required")) {
                             return;   // a game thread wouldn't stop: end the process, VisionSort starts a new one
                         }
                     }
-                    case "quit" -> { return; }
+                    case "quit" -> {
+                        if (human != null) {
+                            human.end();
+                        }
+                        return;
+                    }
                     default -> send(error(req, "Unknown command: " + cmd));
                 }
             } catch (VirtualMachineError e) {
@@ -112,7 +146,7 @@ final class Protocol {
         return m;
     }
 
-    private synchronized void send(final JsonObject m) {
+    synchronized void send(final JsonObject m) {
         out.println(gson.toJson(m));
         out.flush();
     }
