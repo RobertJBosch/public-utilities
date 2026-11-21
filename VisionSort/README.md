@@ -54,6 +54,8 @@ and talks to it over stdin / stdout.
 - 0.7.1: dividing an amount among targets (damage, counters, shields) is a decision ("divide"), a
   phyrexian symbol can be paid with 2 life, and scry / surveil / "any number to the bottom" ask which
   cards and in what order.
+- 0.8.0: play_human seats up to three AIs (a 4-seat table): you block only what attacks you, a player
+  who loses is out while the others play on, and "ended" names the winner and how you went out.
 
 The hooked controller is generated from Forge's jar, since Forge's ~115 decision methods change
 between releases. After upgrading Forge, regenerate it:
