@@ -212,8 +212,11 @@ final class PlayCommand {
 
         if (!recorder.stopped()) {
             final GameOutcome outcome = game.getOutcome();
-            reply.addProperty("draw", outcome.isDraw());
-            if (!outcome.isDraw() && outcome.getWinningLobbyPlayer() != null) {
+            // a game stopped at its time limit is a draw: Forge's Player.onGameOver gives every player
+            // who hasn't lost a win, so the outcome would name the first seat the winner
+            final boolean draw = timedOut || outcome.isDraw();
+            reply.addProperty("draw", draw);
+            if (!draw && outcome.getWinningLobbyPlayer() != null) {
                 reply.addProperty("winner", outcome.getWinningLobbyPlayer().getName());
             }
             reply.addProperty("turns", outcome.getLastTurnNumber());
