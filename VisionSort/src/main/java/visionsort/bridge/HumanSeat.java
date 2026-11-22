@@ -285,14 +285,6 @@ final class HumanSeat {
         return replaying || resumePending;
     }
 
-    int replayed() {
-        return replayed;
-    }
-
-    boolean exact() {
-        return exact;
-    }
-
     void endReplayQuietly() {
         if (resumePending || replaying) {
             replay.clear();
@@ -342,8 +334,9 @@ final class HumanSeat {
         }
     }
 
-    /** The game is ending: release any dialog that waits for an answer. */
-    void abort() {
+    /** The game is ending: release any dialog that waits for an answer. Synchronized with send(): a
+     * dialog being asked either sees `aborted` there or is pending here (it waited for good otherwise). */
+    synchronized void abort() {
         aborted = true;
         final Pending p = pending;
         if (p != null && p.reply() != null) {
@@ -388,7 +381,13 @@ final class HumanSeat {
             resumePending = false;
             owner.resumed(replayed, exact);
         }
-        owner.flush();                                // what happened first, then what to decide
+        if (aborted) {                                // the game ended while this was being asked
+            if (reply != null) {
+                reply.complete(ABORTED);
+            }
+            return id;
+        }
+        owner.flush(false);                           // what happened first (the decision carries the state)
         final JsonObject m = new JsonObject();
         m.add("state", owner.state());
         m.add("decision", d);
@@ -1195,15 +1194,23 @@ final class HumanSeat {
                 return "Assign the damage, or let Forge do it";
             }
             int sum = x.has("to_defender") ? x.get("to_defender").getAsInt() : 0;
+            if (sum < 0) {
+                return "Assign no less than 0 damage";
+            }
             if (sum > 0 && !trample) {
                 return "Only an attacker with trample assigns damage to the player";
             }
+            final Set<Integer> seen = new java.util.HashSet<>();
             for (final JsonElement e : x.getAsJsonArray("assign")) {
                 final int id = e.getAsJsonArray().get(0).getAsInt();
-                if (blockers.stream().noneMatch(b -> b.getId() == id)) {
-                    return "Assign damage only to the blockers";
+                final int n = e.getAsJsonArray().get(1).getAsInt();
+                if (blockers.stream().noneMatch(b -> b.getId() == id) || !seen.add(id)) {
+                    return "Assign damage to each blocker once";
                 }
-                sum += e.getAsJsonArray().get(1).getAsInt();
+                if (n < 0) {
+                    return "Assign no less than 0 damage";
+                }
+                sum += n;
             }
             return sum == amount ? null : "Assign all " + amount + " damage";
         });

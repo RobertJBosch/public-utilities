@@ -60,8 +60,12 @@ and talks to it over stdin / stdout.
   shown), so a Test game can be stepped through on VisionSort's table.
 - 0.9.1: a confirmation or choice about a card says which ("card", "card_name"), e.g. scry 1's top or
   bottom (the card is usually in the library, so not in the state).
+- 0.9.2: fixes from an audit: a game stopped at its time limit is a draw (Forge called every player
+  still in it a winner), and stays a draw if its thread throws while stopping; a dialog asked just as a
+  game ends no longer waits for good; the next game starts only after the last one let go of its AI
+  profiles; the combat-damage answer is checked like the divide answer; walking back is lighter.
 
-The hooked controller is generated from Forge's jar, since Forge's ~115 decision methods change
+The hooked controller is generated from Forge's jar, since Forge's ~113 decision methods change
 between releases. After upgrading Forge, regenerate it:
 
 ```
@@ -84,7 +88,7 @@ mvn install:install-file -Dfile=<forge>/forge-gui-desktop-2.0.16-jar-with-depend
 mvn package
 ```
 
-That gives `target/visionsort-forge-bridge-0.5.0.jar`.
+That gives `target/visionsort-forge-bridge-<version>.jar` (the version in `pom.xml`).
 
 ## Running
 
@@ -96,17 +100,17 @@ Then, from Forge's folder (Forge finds `res/` relative to the working directory)
 Windows form: on Linux / macOS use `:` between the jars and `\` to continue the line.
 
 ```
-java -XX:+UnlockExperimentalVMOptions -XX:hashCode=2 -Xmx4096m -Dfile.encoding=UTF-8 ^
-     -cp "forge-gui-desktop-2.0.16-jar-with-dependencies.jar;<path>/visionsort-forge-bridge-0.5.0.jar" ^
+java -XX:+UnlockExperimentalVMOptions -XX:hashCode=2 -XX:ActiveProcessorCount=1 -Xmx4096m -Dfile.encoding=UTF-8 ^
+     -cp "forge-gui-desktop-2.0.16-jar-with-dependencies.jar;<path>/visionsort-forge-bridge-<version>.jar" ^
      visionsort.bridge.Main
 ```
 
 **`-XX:hashCode=2` matters.** Without it, a seeded game repeats exactly only as the first game in a
 fresh process: Forge's AI iterates some sets ordered by Java identity hashes, which depend on
 everything the process did before. With it, every game is a pure function of its seed, decks and
-settings. The `ready` message reports `"repeatable": true` when the flag is set, and every game's
-reply says whether that game is (it isn't with look-ahead on: Forge's look-ahead search is limited
-by time). The bridge also lifts Forge's 5-second limit on each AI decision to the game's own
+settings. **`-XX:ActiveProcessorCount=1` matters too:** Forge's AI weighs attackers on a thread pool,
+whose order otherwise varies from run to run. The `ready` message reports `"repeatable": true` when
+both flags are set, and every game's reply says whether that game is. The bridge also lifts Forge's 5-second limit on each AI decision to the game's own
 timeout, so a busy PC can't turn a slow decision into a pass.
 
 Then send a request - one JSON object per line, for example:

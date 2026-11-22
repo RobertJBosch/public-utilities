@@ -81,8 +81,8 @@ final class Protocol {
                         send(m);
                     }
                     case "watch" -> {
-                        if (human != null && !human.over() && human.abandoned()) {
-                            human.awaitStop(LEFT_GAME_STOP_MS);
+                        if (!leftGameStopped(req)) {
+                            return;
                         }
                         if (human != null && !human.over()) {
                             send(error(req, "A game is already running: end it first"));
@@ -93,8 +93,8 @@ final class Protocol {
                         }
                     }
                     case "play_human" -> {
-                        if (human != null && !human.over() && human.abandoned()) {
-                            human.awaitStop(LEFT_GAME_STOP_MS);      // a walk back: the game just left is stopping
+                        if (!leftGameStopped(req)) {             // a walk back: the game just left is stopping
+                            return;
                         }
                         if (human != null && !human.over()) {
                             send(error(req, "A game against you is already running: end it first"));
@@ -156,6 +156,19 @@ final class Protocol {
             m.add("id", req.get("id"));
         }
         return m;
+    }
+
+    /** A game that was left (a walk back) stops before the next starts. One that won't is stuck in Forge:
+     * the process is replaced (restart_required), rather than refusing every game after it. */
+    private boolean leftGameStopped(final JsonObject req) throws InterruptedException {
+        final HumanGame g = human;
+        if (g != null && !g.over() && g.abandoned() && !g.awaitStop(LEFT_GAME_STOP_MS)) {
+            final JsonObject e = error(req, "The game that was left wouldn't stop: Forge has to restart");
+            e.addProperty("restart_required", true);
+            send(e);
+            return false;
+        }
+        return true;
     }
 
     private JsonObject error(final JsonObject req, final String text) {

@@ -81,18 +81,23 @@ import forge.util.MyRandom;
  * own decision timer is lifted for the same reason as in PlayCommand.
  *
  * "update" comes before each of the AI's decisions and before each of yours, whenever something
- * happened: the state, Forge's game events since the last one and the new lines of the game log.
+ * happened: the state and the new lines of the game log. Just before your decision it leaves out the
+ * state (the decision carries it). Forge's game events aren't sent: nothing read them.
+ *
+ * A watched game has the game time limit ("timeout_s", default 900): it ends as a draw after it.
  */
 final class HumanGame {
     private static final AtomicLong GAMES = new AtomicLong();
     /** The AI's decision timer, in seconds: never reached (see PlayCommand). */
     private static final int NO_AI_TIMER_S = 7 * 24 * 3600;
+    /** A watched game's time limit when the request gives none (PlayCommand's 4-seat default). */
+    private static final int WATCH_TIMEOUT_S = 900;
 
     private final String id = "h" + GAMES.incrementAndGet();
     private final Consumer<JsonObject> out;
     private final List<String> profiles = new ArrayList<>();
     private final AtomicInteger steps = new AtomicInteger();
-    private final JsonArray events = new JsonArray();
+    private volatile boolean changed;              // a Forge game event since the last update
     private final List<String> notes = new ArrayList<>();
     private int logSeen;
     private long seed;
@@ -101,6 +106,8 @@ final class HumanGame {
     private Player human;                         // null when watching
     private Player viewer;                        // whose side the state shows (the human, or "viewer")
     private boolean watching;
+    private int timeoutS;
+    private volatile boolean timedOut;            // a watched game ended at its time limit
     private boolean showAll;                      // watching: every hand shown
     private volatile HumanSeat seat;              // null when watching
     private volatile Player forced;
@@ -136,6 +143,7 @@ final class HumanGame {
             throw new IllegalArgumentException("A play_human request needs a \"seed\"");
         }
         seed = req.get("seed").getAsLong();
+        timeoutS = req.has("timeout_s") ? req.get("timeout_s").getAsInt() : WATCH_TIMEOUT_S;
         final GameType type = GameType.valueOf(str(req, "format", "Commander"));
         practice = req.has("practice") ? req.getAsJsonObject("practice") : new JsonObject();
         final boolean showHands = practice.has("show_ai_hand") && practice.get("show_ai_hand").getAsBoolean();
@@ -274,6 +282,23 @@ final class HumanGame {
         thread = new Thread(this::run, "VisionSort play " + id);
         thread.setDaemon(true);
         thread.start();
+        if (watching) {
+            final Thread game = thread;
+            final Thread limit = new Thread(() -> {
+                try {
+                    game.join(timeoutS * 1000L);
+                } catch (InterruptedException e) {
+                    return;
+                }
+                if (game.isAlive() && !over) {          // an AI stuck in a loop: a draw, as in PlayCommand
+                    timedOut = true;
+                    end();
+                    game.interrupt();
+                }
+            }, "VisionSort watch limit " + id);
+            limit.setDaemon(true);
+            limit.start();
+        }
     }
 
     private void run() {
@@ -283,13 +308,22 @@ final class HumanGame {
         } catch (Throwable t) {
             failure = t;
         }
-        over = true;
         if (seat != null) {
             seat.abort();
         }
         profiles.forEach(Skills::unregister);
-        if (abandoned) {
+        over = true;                                    // last: the next game may start (it registers profiles)
+        if (abandoned && !timedOut) {                    // (a watched game at its time limit: reported, a draw)
             return;
+        }
+        if (failure instanceof VirtualMachineError) {
+            // out of memory (or worse): nothing is safe to run in this process now, as in PlayCommand
+            failure.printStackTrace();
+            final JsonObject m = new JsonObject();
+            m.addProperty("error", failure.getClass().getSimpleName() + ": " + failure.getMessage());
+            m.addProperty("restart_required", true);
+            send("failed", m);
+            Runtime.getRuntime().halt(3);
         }
         if (failure != null && !game.isGameOver()) {
             failure.printStackTrace();
@@ -427,7 +461,7 @@ final class HumanGame {
     }
 
     boolean abandoned() {
-        return abandoned;
+        return abandoned && !timedOut;               // a watched game at its limit ends as a draw, reported
     }
 
     // --- what the seats call ---------------------------------------------------------------------------------
@@ -476,20 +510,21 @@ final class HumanGame {
 
     @Subscribe
     public void onEvent(final GameEvent event) {
-        final JsonObject e = GameRecorder.describe(event);
-        if (e != null) {
-            synchronized (this) {
-                events.add(e);
-            }
+        if (seat != null && seat.quiet()) {
+            return;                                    // replaying: nothing is shown until "resumed"
         }
+        changed = true;
     }
 
     /** Send an update if anything happened since the last message. */
     synchronized void flush() {
+        flush(true);
+    }
+
+    /** withState false: just before a decision, which carries the state itself. */
+    synchronized void flush(final boolean withState) {
         if (seat != null && seat.quiet()) {
-            while (events.size() > 0) {                  // a replay: "resumed" shows where it got to
-                events.remove(0);
-            }
+            changed = false;                             // a replay: "resumed" shows where it got to
             return;
         }
         final List<GameLogEntry> entries = new ArrayList<>(game.getGameLog().getLogEntries(null));   // newest first
@@ -503,16 +538,15 @@ final class HumanGame {
         fresh.forEach(log::add);
         notes.forEach(log::add);
         notes.clear();
-        if (events.size() == 0 && log.size() == 0) {
+        if (!changed && log.size() == 0) {
             return;
         }
+        changed = false;
         final JsonObject m = new JsonObject();
-        m.add("state", state());
-        m.add("events", events.deepCopy());
-        m.add("log", log);
-        while (events.size() > 0) {
-            events.remove(0);
+        if (withState) {
+            m.add("state", state());
         }
+        m.add("log", log);
         send("update", m);
     }
 
@@ -525,9 +559,7 @@ final class HumanGame {
         entries.forEach(e -> log.add(yours(e.message())));
         notes.forEach(log::add);
         notes.clear();
-        while (events.size() > 0) {
-            events.remove(0);
-        }
+        changed = false;
         final JsonObject m = new JsonObject();
         m.addProperty("at", at);
         m.addProperty("exact", exact);

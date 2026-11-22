@@ -40,7 +40,7 @@ import forge.util.MyRandom;
  *
  *   {"cmd":"play", "id":1, "seed":101, "format":"Commander", "timeout_s":600,
  *    "lookahead":"off" | "on" | "max", "first":"<seat name>", "log":true, "decisions":true,
- *    "record":"none" | "steps" | "snapshots", "stop_at":k,
+ *    "record":"none" | "events" | "steps" | "snapshots", "stop_at":k,
  *    "players":[{"name":"...", "deck":"X:/path/deck.dck",
  *                "profile":"Default", "settings":{"PLAY_AGGRO":"true", ...},
  *                "lookahead":"on", "mistakes":{"skip_spell":0.2, "choose":0.3, ...}}, ...]}
@@ -56,7 +56,12 @@ import forge.util.MyRandom;
  * settings or mistakes plays exactly as Forge's own AI with that profile.
  *
  * "first" names the seat that plays first; without it Forge flips for it. "record" adds the game
- * record and "stop_at" replays to a step (see GameRecorder). "decisions" asks for the decision log.
+ * record ("events": each step's events; "steps": with a checksum of the state; "snapshots": with the
+ * state) and "stop_at" replays to a step (see GameRecorder). "decisions" asks for the decision log.
+ *
+ * Diagnostics, kept on purpose though VisionSort doesn't read them: "deck_sizes" (a card Forge dropped
+ * from a deck shows here), "decision_counts", "effective" (the settings each seat played with), the
+ * "decisions" log, and "stop_at" / "stopped_at" / "step_count" (replaying an AI game to a step).
  *
  * What makes a game a pure function of its seed, decks and settings ("repeatable" in the reply):
  *  - the random generator is seeded before the decks are loaded (a line like "8 Plains" spreads
@@ -200,7 +205,8 @@ final class PlayCommand {
             reply.addProperty("restart_required", true);
             return reply;
         }
-        if (failure[0] != null && !(failure[0] instanceof GameRecorder.StopAtStep)) {
+        if (failure[0] != null && !timedOut && !(failure[0] instanceof GameRecorder.StopAtStep)) {
+            // (a timed-out game is a draw, whatever its interrupted thread threw while stopping)
             if (failure[0] instanceof Exception ex) {
                 throw ex;
             }

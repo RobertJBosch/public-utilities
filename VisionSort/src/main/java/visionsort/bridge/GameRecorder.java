@@ -28,8 +28,8 @@ import forge.game.event.GameEvent;
  * Replay: the same play request with "stop_at": k runs to step k and stops there (StopAtStep),
  * returning that step's state and every checksum up to it. Games are a pure function of seed, decks
  * and settings (see Main.repeatable()), so an AI-only game needs no decisions fed back; the
- * checksums prove each step matched. A human seat's answers (Play mode) will be fed back by the
- * human-seat protocol.
+ * checksums prove each step matched. A human seat's answers (Play mode) are fed back by
+ * play_human's "replay" (HumanSeat), checked against the same checksums.
  *
  * Events are Forge's own (forge.game.event, Java records), described generically from their record
  * components, so events a later Forge adds are recorded without code changes. Events that only
@@ -37,7 +37,7 @@ import forge.game.event.GameEvent;
  */
 final class GameRecorder {
     enum Mode {
-        NONE, STEPS, SNAPSHOTS;
+        NONE, EVENTS, STEPS, SNAPSHOTS;
 
         static Mode parse(final String s) {
             for (final Mode m : values()) {
@@ -45,7 +45,7 @@ final class GameRecorder {
                     return m;
                 }
             }
-            throw new IllegalArgumentException("record must be none, steps or snapshots, not " + s);
+            throw new IllegalArgumentException("record must be none, events, steps or snapshots, not " + s);
         }
     }
 
@@ -84,14 +84,17 @@ final class GameRecorder {
         if (mode == Mode.NONE && k != stopAt) {
             return;
         }
-        final JsonObject state = StateSnapshot.of(game);
+        // "events" leaves out the state and its checksum: what a Test run reads costs ~11% less game time
+        final JsonObject state = mode == Mode.EVENTS && k != stopAt ? null : StateSnapshot.of(game);
         final JsonObject step = new JsonObject();
         step.addProperty("step", k);
         step.addProperty("seat", seat);
         step.addProperty("decision", decision);
         step.addProperty("turn", game.getPhaseHandler().getTurn());
         step.addProperty("phase", String.valueOf(game.getPhaseHandler().getPhase()));
-        step.addProperty("checksum", StateSnapshot.checksum(state));
+        if (state != null) {
+            step.addProperty("checksum", StateSnapshot.checksum(state));
+        }
         step.add("events", pending);
         pending = new JsonArray();
         if (mode == Mode.SNAPSHOTS) {
