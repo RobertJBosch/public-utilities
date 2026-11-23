@@ -8,13 +8,14 @@
  */
 package visionsort.bridge;
 
+import java.util.List;
 import java.util.function.Supplier;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-
 import forge.game.Game;
+import forge.game.card.Card;
 import forge.game.phase.PhaseHandler;
 import forge.game.player.Player;
 
@@ -63,6 +64,8 @@ public final class DecisionHook {
         listener = l;
     }
 
+    private Peek peek = Peek.NONE;
+
     DecisionHook(final String seat, final Policy policy, final JsonArray log, final boolean keepLog,
             final DecisionCounts counts, final GameRecorder recorder, final boolean lookahead,
             final String firstSeat) {
@@ -74,6 +77,12 @@ public final class DecisionHook {
         this.recorder = recorder;
         this.lookahead = lookahead;
         this.firstSeat = firstSeat;
+    }
+
+    /** What this seat may see beyond its own cards (VisionSort's Omniscient / Cheater skills). */
+    DecisionHook peek(final Peek p) {
+        this.peek = p;
+        return this;
     }
 
     Object call(final HookedControllerAi controller, final String decision, final Object[] args,
@@ -113,6 +122,8 @@ public final class DecisionHook {
             game.AI_FLAT_MONTE_CARLO_MAX = false;    // Forge's max mode is timed; see Skills
             game.AI_FLAT_MONTE_CARLO_LITE = false;
         }
+        final Player ai = controller.getPlayer();
+        final List<Card> shown = top && peek.any() ? peek.show(game, ai) : List.of();
         depth++;
         final Object aiChoice;
         try {
@@ -124,6 +135,7 @@ public final class DecisionHook {
             throw e;
         } finally {
             depth--;
+            Peek.hide(shown, ai);
             if (top) {
                 game.AI_FLAT_MONTE_CARLO = savedMc;
                 game.AI_FLAT_MONTE_CARLO_MAX = savedMax;
