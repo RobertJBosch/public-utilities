@@ -37,6 +37,7 @@ import forge.game.GameRules;
 import forge.game.GameType;
 import forge.game.Match;
 import forge.game.event.GameEvent;
+import forge.game.event.GameEventGameStarted;
 import forge.game.player.Player;
 import forge.game.player.PlayerOutcome;
 import forge.game.player.RegisteredPlayer;
@@ -98,6 +99,7 @@ final class HumanGame {
     private final List<String> profiles = new ArrayList<>();
     private final AtomicInteger steps = new AtomicInteger();
     private volatile boolean changed;              // a Forge game event since the last update
+    private volatile int firstSeat = -1;           // the seat that plays first (GameEventGameStarted), once known
     private final List<String> notes = new ArrayList<>();
     private int logSeen;
     private long seed;
@@ -478,7 +480,11 @@ final class HumanGame {
     }
 
     JsonObject state() {
-        return ViewState.of(game, viewer, seat != null ? seat.showHands : showAll, steps.get());
+        final JsonObject s = ViewState.of(game, viewer, seat != null ? seat.showHands : showAll, steps.get());
+        if (firstSeat >= 0) {
+            s.addProperty("first", firstSeat);           // who plays first, from the coin toss on (mulligans too)
+        }
+        return s;
     }
 
     synchronized void note(final String line) {
@@ -510,6 +516,10 @@ final class HumanGame {
 
     @Subscribe
     public void onEvent(final GameEvent event) {
+        if (event instanceof GameEventGameStarted started && started.firstTurn() != null) {
+            final Player first = game.getPlayer(started.firstTurn());     // (a replay too: the state carries it)
+            firstSeat = first == null ? -1 : ViewState.seatOf(game.getRegisteredPlayers(), first);
+        }
         if (seat != null && seat.quiet()) {
             return;                                    // replaying: nothing is shown until "resumed"
         }

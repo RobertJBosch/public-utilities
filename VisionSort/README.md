@@ -67,6 +67,7 @@ and talks to it over stdin / stdout.
 - 0.9.3: "name a card" (Pithing Needle, Brain Pry, Meddling Mage...) is a "name_card" decision answered
   {"name": ...} and checked against the names Forge allows, instead of a list of every card Forge knows
   (~30,000); the combat-damage prompt names a token attacker.
+- 0.9.4: a game against you says who plays first in its state ("first": the seat), from the coin toss on.
 
 The hooked controller is generated from Forge's jar, since Forge's ~113 decision methods change
 between releases. After upgrading Forge, regenerate it:
