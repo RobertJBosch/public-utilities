@@ -14,25 +14,26 @@ import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.function.Function;
-
 import javax.swing.SwingUtilities;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-
 import forge.LobbyPlayer;
+import forge.card.CardStateName;
 import forge.card.MagicColor;
 import forge.deck.CardPool;
 import forge.game.Game;
 import forge.game.GameEntity;
 import forge.game.GameEntityView;
 import forge.game.card.Card;
+import forge.game.card.CardFaceView;
 import forge.game.card.CardView;
 import forge.game.combat.Combat;
 import forge.game.combat.CombatUtil;
@@ -63,9 +64,9 @@ import forge.gamemodes.match.input.InputPassPriority;
 import forge.gamemodes.match.input.InputPayMana;
 import forge.gamemodes.match.input.InputSelectTargets;
 import forge.item.PaperCard;
-import forge.localinstance.skin.FSkinProp;
 import forge.localinstance.properties.ForgeConstants;
 import forge.localinstance.properties.ForgePreferences.FPref;
+import forge.localinstance.skin.FSkinProp;
 import forge.model.FModel;
 import forge.player.PlayerControllerHuman;
 import forge.trackable.TrackableCollection;
@@ -117,6 +118,8 @@ final class HumanSeat {
     private static final Field PAID_FOR;
     private static final Field TO_RETURN;
     private static final Field PHY_LIFE;
+    /** A list of card names longer than this is a "name a card" question, not a list to pick from. */
+    private static final int NAME_LIST_MAX = 60;
     private static final Field CONFIRM_CARD;
     private static final Field CONFIRM_SA;
     static {
@@ -1124,6 +1127,33 @@ final class HumanSeat {
         return choose(text, min, max, choices, display, ordered, null);
     }
 
+    /**
+     * "Name a card" (Pithing Needle, Meddling Mage, Cranial Extraction...): Forge offers every card face it
+     * knows that fits (~30,000), sorted - as a list of choices, far too long to send or to pick from. It's
+     * a "name_card" decision instead, answered {"name": "..."}: the name is checked against Forge's own list
+     * (any case; a split card by either face or "A // B"), so a name the card doesn't allow is refused.
+     */
+    private <T> T nameCard(final String text, final List<T> choices) {
+        final Map<String, T> byName = new HashMap<>();
+        for (final T c : choices) {
+            final String n = ((CardFaceView) c).getName();
+            byName.putIfAbsent(n.toLowerCase(Locale.ROOT), c);
+        }
+        final JsonObject f = new JsonObject();
+        f.addProperty("allowed", choices.size());       // how many names it would take (one is asked)
+        final JsonObject a = ask("name_card", text, f, x -> {
+            if (!x.has("name") || x.get("name").getAsString().isBlank()) {
+                return "Name a card";
+            }
+            final String n = x.get("name").getAsString().trim();
+            return byName.containsKey(n.toLowerCase(Locale.ROOT)) ? null : n + " can't be named here";
+        });
+        if (a == null) {
+            return choices.get(0);                      // the game ended: Forge's default
+        }
+        return byName.get(a.get("name").getAsString().trim().toLowerCase(Locale.ROOT));
+    }
+
     private <T> List<T> choose(final String text, final int min, final int max, final List<T> choices,
             final Function<T, String> display, final boolean ordered, final CardView card) {
         if (choices.isEmpty()) {
@@ -1186,7 +1216,7 @@ final class HumanSeat {
         f.add("blockers", ids);
         f.addProperty("amount", amount);
         f.addProperty("trample", trample);
-        final JsonObject a = ask("damage", "Divide " + attacker.getName() + "'s " + amount + " damage", f, x -> {
+        final JsonObject a = ask("damage", "Divide " + nameOf(attacker) + "'s " + amount + " damage", f, x -> {
             if (x.has("auto")) {
                 return null;
             }
@@ -1240,6 +1270,14 @@ final class HumanSeat {
             out.put(null, a.get("to_defender").getAsInt());
         }
         return out;
+    }
+
+    /** A card's name as the state names it (ViewState): the view's can be blank (seen: "Divide 's 2 damage"). */
+    private String nameOf(final CardView v) {
+        final Card c = game.findById(v.getId());
+        final String n = c == null ? v.getName()
+                : c.isFaceDown() ? c.getState(CardStateName.Original).getName() : c.getName();
+        return n == null || n.isBlank() ? "the attacker" : n;
     }
 
     /** A number in a range (X, how many): Forge's GUI offers it as a list of numbers plus "Other". */
@@ -1448,6 +1486,9 @@ final class HumanSeat {
             }
             if (min >= choices.size()) {
                 return new ArrayList<>(choices);         // nothing to choose: all of them
+            }
+            if (max == 1 && choices.size() > NAME_LIST_MAX && choices.get(0) instanceof CardFaceView) {
+                return List.of(nameCard(message, choices));   // "name a card": every card Forge knows
             }
             return choose(message, min, Math.max(min, Math.min(max, choices.size())), choices,
                     display == null ? null : display::apply, false);

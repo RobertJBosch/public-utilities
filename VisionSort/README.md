@@ -64,6 +64,9 @@ and talks to it over stdin / stdout.
   still in it a winner), and stays a draw if its thread throws while stopping; a dialog asked just as a
   game ends no longer waits for good; the next game starts only after the last one let go of its AI
   profiles; the combat-damage answer is checked like the divide answer; walking back is lighter.
+- 0.9.3: "name a card" (Pithing Needle, Brain Pry, Meddling Mage...) is a "name_card" decision answered
+  {"name": ...} and checked against the names Forge allows, instead of a list of every card Forge knows
+  (~30,000); the combat-damage prompt names a token attacker.
 
 The hooked controller is generated from Forge's jar, since Forge's ~113 decision methods change
 between releases. After upgrading Forge, regenerate it:
