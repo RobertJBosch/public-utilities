@@ -10,7 +10,7 @@
 
   <groupId>visionsort</groupId>
   <artifactId>visionsort-forge-bridge</artifactId>
-  <version>0.9.4</version>
+  <version>0.9.5-clock</version>
   <packaging>jar</packaging>
   <name>VisionSort Forge bridge</name>
 
@@ -24,8 +24,8 @@
   <properties>
     <!-- The Forge release this bridge is built and tested against. -->
     <forge.version>2.0.16</forge.version>
-    <!-- Forge runs on Java 17+; build for 17 so the jar runs on any of them (VisionSort ships 25 LTS). -->
-    <maven.compiler.release>17</maven.compiler.release>
+    <!-- 25: VisionSort ships Java 25 LTS, and WorkClock rewrites Forge's AI classes with java.lang.classfile (24+). -->
+    <maven.compiler.release>25</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
   </properties>
 
@@ -57,6 +57,9 @@
             <manifest>
               <mainClass>visionsort.bridge.Main</mainClass>
             </manifest>
+            <manifestEntries>
+              <Premain-Class>visionsort.bridge.WorkClock</Premain-Class>
+            </manifestEntries>
           </archive>
         </configuration>
       </plugin>

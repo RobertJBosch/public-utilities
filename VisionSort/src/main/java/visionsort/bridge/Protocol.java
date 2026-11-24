@@ -58,6 +58,7 @@ final class Protocol {
         m.addProperty("forge", forgeVersion);
         m.addProperty("startup_ms", startupMs);
         m.addProperty("repeatable", repeatable);   // see Main.repeatable()
+        m.addProperty("work_clock", WorkClock.installed());   // the look-ahead counts work, not time
         send(m);
     }
 
