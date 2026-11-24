@@ -20,7 +20,7 @@ and talks to it over stdin / stdout.
   Experimental, Hard, Hardest), overrides of any of Forge's AI settings, and look-ahead off / on /
   max. `{"cmd":"profiles"}` lists every setting with Forge's own explanation and the values of
   Forge's profiles. A seat's look-ahead is bounded by its search counts, not by time, so its games
-  repeat; Forge's own "max" mode is timed and isn't used ("max" here uses the same counts).
+  repeat (with the work clock, 0.10.0); Forge's own "max" mode isn't used ("max" here uses its counts).
 - Routes every AI decision through a hook (`DecisionHook`): it can log each one (what was asked,
   what was chosen) and let a policy change the answer. `MistakePolicy` gives a seat deliberate,
   always-legal mistakes at set rates, for VisionSort's "Novice" skill: skipped lands and spells,
@@ -68,6 +68,15 @@ and talks to it over stdin / stdout.
   {"name": ...} and checked against the names Forge allows, instead of a list of every card Forge knows
   (~30,000); the combat-damage prompt names a token attacker.
 - 0.9.4: a game against you says who plays first in its state ("first": the seat), from the coin toss on.
+- 0.10.0: the AI's clock counts work, not time (`WorkClock`, loaded with `-javaagent:` the bridge jar):
+  Forge 2.0.16's look-ahead also stops at time limits (10 s a decision however high a profile sets it,
+  60 s a turn, a deadline per rollout, a first rollout timed to size the search), so Hard and Hardest
+  games played differently from run to run and PC to PC. With the agent, only Forge's AI classes
+  (forge/ai) read a counter that moves when they ask it the time, so those limits are never reached and
+  the search is bounded by its counts alone; the ready message says `"work_clock": true`. Each priority
+  action also says whether it can be paid for now (`"pay"`: `"yes"`; `"no"`, proven: even every mana
+  source at its most can't cover the cost; or `"unsure"`) and whether it has a legal target
+  (`"targets"`), so a table can keep what you can't do out of the way (`Affordable`). Built for Java 25.
 
 The hooked controller is generated from Forge's jar, since Forge's ~113 decision methods change
 between releases. After upgrading Forge, regenerate it:
@@ -79,7 +88,8 @@ java -cp <forge>/forge-gui-desktop-<version>-jar-with-dependencies.jar tools/Gen
 ## Requirements
 
 - Forge **2.0.16** (`forge-installer-2.0.16.tar.bz2` from Forge's GitHub releases), unpacked.
-- Java **17 or newer** to run it; VisionSort uses Temurin 25 LTS. A JDK and Maven 3.9 to build it.
+- Java **25 or newer** to run it (VisionSort uses Temurin 25 LTS; the work clock uses
+  `java.lang.classfile`). A JDK 25 and Maven 3.9 to build it.
 
 ## Building
 
@@ -105,6 +115,7 @@ Windows form: on Linux / macOS use `:` between the jars and `\` to continue the 
 
 ```
 java -XX:+UnlockExperimentalVMOptions -XX:hashCode=2 -XX:ActiveProcessorCount=1 -Xmx4096m -Dfile.encoding=UTF-8 ^
+     -javaagent:<path>/visionsort-forge-bridge-<version>.jar ^
      -cp "forge-gui-desktop-2.0.16-jar-with-dependencies.jar;<path>/visionsort-forge-bridge-<version>.jar" ^
      visionsort.bridge.Main
 ```
@@ -113,8 +124,9 @@ java -XX:+UnlockExperimentalVMOptions -XX:hashCode=2 -XX:ActiveProcessorCount=1 
 fresh process: Forge's AI iterates some sets ordered by Java identity hashes, which depend on
 everything the process did before. With it, every game is a pure function of its seed, decks and
 settings. **`-XX:ActiveProcessorCount=1` matters too:** Forge's AI weighs attackers on a thread pool,
-whose order otherwise varies from run to run. The `ready` message reports `"repeatable": true` when
-both flags are set, and every game's reply says whether that game is. The bridge also lifts Forge's 5-second limit on each AI decision to the game's own
+whose order otherwise varies from run to run. **`-javaagent:` the bridge jar** gives the AI its work
+clock, without which games with look-ahead (Hard, Hardest) don't repeat. The `ready` message reports
+`"repeatable": true` when both flags are set and `"work_clock": true` with the agent, and every game's reply says whether that game is. The bridge also lifts Forge's 5-second limit on each AI decision to the game's own
 timeout, so a busy PC can't turn a slow decision into a pass.
 
 Then send a request - one JSON object per line, for example:

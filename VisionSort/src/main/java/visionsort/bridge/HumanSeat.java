@@ -787,12 +787,8 @@ final class HumanSeat {
         }
         final JsonObject f = new JsonObject();
         f.add("actions", actions);
-        f.addProperty("afford_ms", affordNanos / 1_000_000.0);
-        affordNanos = 0;
         send("priority", priorityPrompt(), f, in, sas, null, reuse);
     }
-
-    private long affordNanos;
 
     private void addActions(final Card c, final ZoneType z, final List<Object> sas, final JsonArray actions) {
         final List<SpellAbility> all = c.getAllPossibleAbilities(me, true);
@@ -825,14 +821,11 @@ final class HumanSeat {
             a.addProperty("kind", kind);
             a.addProperty("card", c.getId());
             a.addProperty("cost", sa.getPayCosts() == null ? "" : sa.getPayCosts().toSimpleString());
-            final long t0 = System.nanoTime();
-            final Affordable.Verdict pay = Affordable.of(sa, me);
-            a.addProperty("pay", pay.name().toLowerCase(java.util.Locale.ROOT));
+            // "yes" / "no" (proven: it can't be paid for now) / "unsure"; targets false: no legal target. See
+            // Affordable - measured 2026-11-23 over 30 games: 68% of the actions offered were provably unpayable, and
+            // not one of 1,734 tried was ever paid for; ~1 ms a priority.
+            a.addProperty("pay", Affordable.of(sa, me).name().toLowerCase(java.util.Locale.ROOT));
             a.addProperty("targets", Affordable.targetable(sa));
-            if (pay == Affordable.Verdict.YES) {
-                a.addProperty("proven", Affordable.proven(sa, me));     // measurement only: must never be true here
-            }
-            affordNanos += System.nanoTime() - t0;
             actions.add(a);
             sas.add(sa);
         }

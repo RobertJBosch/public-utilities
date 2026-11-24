@@ -1,4 +1,11 @@
-// Bosch SoftWorks LLC - VisionSort's Forge bridge. GPL-3.0-or-later, as Forge.
+/*
+ * VisionSort Forge bridge
+ * Copyright (C) 2026 Bosch SoftWorks LLC
+ *
+ * This program is free software: you can redistribute it and/or modify it under the terms of the
+ * GNU General Public License as published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version. See LICENSE at the root of this repository.
+ */
 package visionsort.bridge;
 
 import forge.ai.ComputerUtilAbility;
@@ -86,28 +93,6 @@ final class Affordable {
             return Verdict.YES;
         }
         return provablyShort(sa, me, need[0]) ? Verdict.NO : Verdict.UNSURE;
-    }
-
-    /** For the measurement: is the cost provably out of reach, whatever Forge's check says? (Never true with YES.) */
-    static boolean proven(final SpellAbility sa, final Player me) {
-        final Cost cost = sa.getPayCosts();
-        if (cost == null || !cost.hasManaCost()) {
-            return false;
-        }
-        final ManaCostBeingPaid[] need = {null};
-        final Random real = MyRandom.getRandom();
-        final long timestamp = me.getGame().getTimestamp();
-        MyRandom.setRandom(new Random(0));
-        try {
-            me.runWithController(() -> need[0] = ComputerUtilMana.calculateManaCost(cost, sa, me, true, 0, false),
-                    new PlayerControllerAi(me.getGame(), me, me.getOriginalLobbyPlayer()));
-        } catch (RuntimeException e) {
-            return false;
-        } finally {
-            MyRandom.setRandom(real);
-            me.getGame().dangerouslySetTimestamp(timestamp);
-        }
-        return provablyShort(sa, me, need[0]);
     }
 
     private static boolean provablyShort(final SpellAbility sa, final Player me, final ManaCostBeingPaid need) {
