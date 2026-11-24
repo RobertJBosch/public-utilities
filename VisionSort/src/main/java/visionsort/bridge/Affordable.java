@@ -42,7 +42,9 @@ import java.util.Random;
  *
  * Forge's check runs as Forge's GUI runs it: under a throwaway AI controller (no prompts), and here also on a
  * throwaway random generator, since the AI's payment logic rolls dice (RESERVE_MANA_FOR_MAIN2_CHANCE): the game's
- * own sequence must not move, or a game would differ from the same game played without the check.
+ * own sequence must not move, or a game would differ from the same game played without the check. Its timestamp
+ * counter is put back too: working out the cost (CostAdjustment) takes timestamps, and the state checksum includes
+ * the counter - seen 2026-11-23, every decision's checksum differed from bridge 0.9.4's though the games didn't.
  */
 final class Affordable {
     enum Verdict { YES, NO, UNSURE }
@@ -67,6 +69,7 @@ final class Affordable {
         final boolean[] yes = {false};
         final ManaCostBeingPaid[] need = {null};
         final Random real = MyRandom.getRandom();
+        final long timestamp = me.getGame().getTimestamp();
         MyRandom.setRandom(new Random(0));
         try {
             me.runWithController(() -> {
@@ -77,6 +80,7 @@ final class Affordable {
             return Verdict.UNSURE;                     // a card Forge's check can't handle: offer it
         } finally {
             MyRandom.setRandom(real);
+            me.getGame().dangerouslySetTimestamp(timestamp);
         }
         if (yes[0]) {
             return Verdict.YES;
@@ -92,6 +96,7 @@ final class Affordable {
         }
         final ManaCostBeingPaid[] need = {null};
         final Random real = MyRandom.getRandom();
+        final long timestamp = me.getGame().getTimestamp();
         MyRandom.setRandom(new Random(0));
         try {
             me.runWithController(() -> need[0] = ComputerUtilMana.calculateManaCost(cost, sa, me, true, 0, false),
@@ -100,6 +105,7 @@ final class Affordable {
             return false;
         } finally {
             MyRandom.setRandom(real);
+            me.getGame().dangerouslySetTimestamp(timestamp);
         }
         return provablyShort(sa, me, need[0]);
     }
