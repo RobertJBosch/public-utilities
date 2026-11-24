@@ -202,7 +202,8 @@ final class HumanGame {
                 profiles.add(profile);
                 final Policy policy = MistakePolicy.from(p.has("mistakes") ? p.getAsJsonObject("mistakes") : null, seed, i);
                 final DecisionHook hook = new DecisionHook(name, policy, new JsonArray(), false, counts, recorder,
-                        lookahead != Skills.Lookahead.OFF, first).peek(Peek.from(p));
+                        lookahead != Skills.Lookahead.OFF, first).peek(Peek.from(p))
+                        .lucky(p.has("lucky") && p.get("lucky").getAsBoolean());
                 hook.listen(this::aiDecides);
                 rp.setPlayer(new BridgeLobbyPlayer(name, profile, hook));
             }

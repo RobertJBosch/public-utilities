@@ -159,7 +159,8 @@ final class PlayCommand {
             final RegisteredPlayer rp = type == GameType.Commander
                     ? RegisteredPlayer.forCommander(deck) : new RegisteredPlayer(deck);
             rp.setPlayer(new BridgeLobbyPlayer(name, profile, new DecisionHook(name, policy, decisions,
-                    keepDecisions, counts, recorder, lookahead != Skills.Lookahead.OFF, first).peek(Peek.from(p))));
+                    keepDecisions, counts, recorder, lookahead != Skills.Lookahead.OFF, first).peek(Peek.from(p))
+                    .lucky(p.has("lucky") && p.get("lucky").getAsBoolean())));
             players.add(rp);
             i++;
         }
