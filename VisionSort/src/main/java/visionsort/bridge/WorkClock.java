@@ -38,9 +38,17 @@ import java.util.concurrent.atomic.AtomicLong;
  * Only forge/ai is rewritten: the bridge's own timeouts (a game's time limit, a stuck game) keep real time.
  */
 public final class WorkClock {
-    /** A nanosecond per question: 10 s of the AI's budget would take ten billion of them. */
-    static final long STEP = 1;
-    private static final AtomicLong NOW = new AtomicLong(1_000_000_000L);
+    /**
+     * How far the clock moves each time the AI asks it the time: the real time one question stood for, measured
+     * 2026-11-24 (Hardest v Hardest on this PC: a median 57 questions a second, 0-106 over 15 minutes), so the
+     * budgets bind after about as much work as they did on real time - only now the same work everywhere. Not a
+     * nanosecond: with it no budget was ever reached, and the AI's look-ahead re-aimed an Equip {0} ability 1,872
+     * times in one turn (its turn budget is what used to stop it), so a game ran 15+ minutes.
+     * (-Dvisionsort.clock.step_ns=... to measure with another.)
+     */
+    static final long STEP = Long.getLong("visionsort.clock.step_ns", 17_000_000L);
+    private static final long START = 1_000_000_000L;
+    private static final AtomicLong NOW = new AtomicLong(START);
     private static final String OWNER = "java/lang/System";
     private static final ClassDesc SELF = ClassDesc.of(WorkClock.class.getName());
     private static volatile boolean installed;
@@ -84,6 +92,29 @@ public final class WorkClock {
             }
         });
         installed = true;
+        if (Boolean.getBoolean("visionsort.clock.diag")) {
+            final Thread t = new Thread(WorkClock::report, "work clock diag");
+            t.setDaemon(true);
+            t.start();
+        }
+    }
+
+    /** -Dvisionsort.clock.diag=true: every 10 s, how many times the AI asked the time (to size STEP from). */
+    private static void report() {
+        long lastReads = 0;
+        long last = System.nanoTime();
+        while (true) {
+            try {
+                Thread.sleep(10_000);
+            } catch (InterruptedException e) {
+                return;
+            }
+            final long reads = (NOW.get() - START) / STEP;
+            final long now = System.nanoTime();
+            System.err.printf("WORKCLOCK reads=%d +%d in %.1f s%n", reads, reads - lastReads, (now - last) / 1e9);
+            lastReads = reads;
+            last = now;
+        }
     }
 
     private static boolean isClockCall(final CodeElement e) {
