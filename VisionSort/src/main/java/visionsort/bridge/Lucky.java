@@ -15,29 +15,33 @@ import forge.game.player.Player;
 import forge.game.zone.ZoneType;
 
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 
 /**
  * A "lucky" seat's shuffles (VisionSort's Cheater skill): every time its library is shuffled, the cards come out
- * in an order a player would wish for - lands when it needs them, spells it can cast, cheapest first.
+ * in an order a player would wish for - lands when it needs them, and an opening hand it can cast.
  *
  * Forge has a cheat of its own (AiController.cheatShuffle, "mana weave"), but it was made for 40- and 60-card
  * decks: it plants seven lands near the top and puts every other land at the bottom, so a 100-card Commander deck
  * would draw no land at all after its seventh. Here instead:
- *  - the opening hand is 3 lands and 4 spells;
+ *  - the opening hand is 3 lands and 4 spells, the spells ones it can cast early (mana value 3 or less) when the
+ *    deck has them;
  *  - then lands and spells alternate until it has 7 lands (in hand and in play), and after that one card in three
  *    is a land - never screwed, never flooded;
- *  - spells come cheapest first (by mana value), so it curves out and its ramp comes early.
+ *  - otherwise spells come in Forge's own shuffled order. (The first version dealt every spell cheapest first:
+ *    in a 100-card deck it drew 1- and 2-drops all game while its best cards sat at the bottom, and it won no
+ *    more than Hardest - 14 of 30 on the 2026-11-24 ladder.)
  * A shuffle later in the game (a tutor, a fetch land) keeps to the same rhythm from the lands it has by then.
- * The arrangement starts from Forge's own shuffle (the order within lands and within each mana value is Forge's),
- * so a game still repeats from its seed.
+ * The arrangement starts from Forge's own shuffle (the order within lands and within spells is Forge's), so a game
+ * still repeats from its seed.
  */
 final class Lucky {
     static final int OPENING = 7;
     static final int OPENING_LANDS = 3;
     static final int ENOUGH_LANDS = 7;
     static final int LAND_EVERY_LATE = 3;
+    static final int OPENING_SPELLS = OPENING - OPENING_LANDS;
+    static final int CHEAP = 3;                   // an opening hand's spells: mana value at most this
 
     private Lucky() {
     }
@@ -48,9 +52,18 @@ final class Lucky {
         for (final Card c : shuffled) {
             (c.isLand() ? lands : spells).add(c);
         }
-        spells.sort(Comparator.comparingInt(Card::getCMC));        // stable: Forge's order within a mana value
         final int have = ai.getCardsIn(ZoneType.Hand).size() + ai.getCardsIn(ZoneType.Battlefield).size() == 0
                 ? -1 : countLands(ai);
+        if (have < 0) {                                             // the opening hand: cheap spells to the front
+            final List<Card> cheap = new ArrayList<>();
+            for (final Card c : spells) {
+                if (cheap.size() < OPENING_SPELLS && c.getCMC() <= CHEAP) {
+                    cheap.add(c);
+                }
+            }
+            spells.removeAll(cheap);
+            spells.addAll(0, cheap);
+        }
         final CardCollection out = new CardCollection();
         int landsSoFar = Math.max(0, have);
         int sinceLand = 0;
