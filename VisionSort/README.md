@@ -77,6 +77,13 @@ and talks to it over stdin / stdout.
   action also says whether it can be paid for now (`"pay"`: `"yes"`; `"no"`, proven: even every mana
   source at its most can't cover the cost; or `"unsure"`) and whether it has a legal target
   (`"targets"`), so a table can keep what you can't do out of the way (`Affordable`). Built for Java 25.
+- 0.11.0: two cheats an AI seat can be given, for VisionSort's "Cheater" skill. `"peek": {"hand": true,
+  "library": 3}` lets it see every opponent's hand and the top cards of their libraries (`Peek`): around
+  each of its decisions those cards get Forge's own temporary "may look", so its look-ahead plans against
+  them instead of shuffling them as unknown; nobody else's view changes. `"lucky": true` arranges every
+  shuffle of its own library (`Lucky`): an opening hand of 3 lands and 4 spells of mana value 3 or less,
+  then land and spell in turn until it has 7 lands, then one land in three; otherwise Forge's own order.
+  `"lucky": "opening"` arranges only the opening hand. Both leave a game repeatable from its seed.
 
 The hooked controller is generated from Forge's jar, since Forge's ~113 decision methods change
 between releases. After upgrading Forge, regenerate it:

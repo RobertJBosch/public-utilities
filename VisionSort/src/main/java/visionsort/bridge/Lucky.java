@@ -8,6 +8,8 @@
  */
 package visionsort.bridge;
 
+import com.google.gson.JsonObject;
+import com.google.gson.JsonPrimitive;
 import forge.game.card.Card;
 import forge.game.card.CardCollection;
 import forge.game.card.CardCollectionView;
@@ -34,8 +36,40 @@ import java.util.List;
  * A shuffle later in the game (a tutor, a fetch land) keeps to the same rhythm from the lands it has by then.
  * The arrangement starts from Forge's own shuffle (the order within lands and within spells is Forge's), so a game
  * still repeats from its seed.
+ *
+ * A seat's "lucky": true (or "always") arranges every shuffle - Cheater. "lucky": "opening" arranges only the
+ * shuffles before the game starts (the first, and a mulligan's) and leaves the rest to Forge: a good start, then
+ * fair draws. Measured 1v1 on 6 decks against Hardest (2026-11-25/26): every shuffle lucky won 63%, and with the
+ * peek as well 79% (Cheater); the peek with a lucky opening only, 49% - no stronger than Hardest, so the rhythm of
+ * the whole game is what counts, not the opening hand.
  */
 final class Lucky {
+    enum Mode {
+        OFF, OPENING, ALWAYS;
+
+        static Mode from(final JsonObject seat) {
+            if (!seat.has("lucky") || seat.get("lucky").isJsonNull()) {
+                return OFF;
+            }
+            final JsonPrimitive v = seat.getAsJsonPrimitive("lucky");
+            if (v.isBoolean()) {
+                return v.getAsBoolean() ? ALWAYS : OFF;
+            }
+            return switch (v.getAsString()) {
+                case "opening" -> OPENING;
+                case "always" -> ALWAYS;
+                case "off" -> OFF;
+                default -> throw new IllegalArgumentException(
+                        "lucky must be true, false, \"opening\" or \"always\", not " + v);
+            };
+        }
+
+        /** Whether this shuffle of ai's library is arranged. */
+        boolean arranges(final Player ai) {
+            return this == ALWAYS || this == OPENING && opening(ai);
+        }
+    }
+
     static final int OPENING = 7;
     static final int OPENING_LANDS = 3;
     static final int ENOUGH_LANDS = 7;
@@ -52,8 +86,7 @@ final class Lucky {
         for (final Card c : shuffled) {
             (c.isLand() ? lands : spells).add(c);
         }
-        final int have = ai.getCardsIn(ZoneType.Hand).size() + ai.getCardsIn(ZoneType.Battlefield).size() == 0
-                ? -1 : countLands(ai);
+        final int have = opening(ai) ? -1 : countLands(ai);
         if (have < 0) {                                             // the opening hand: cheap spells to the front
             final List<Card> cheap = new ArrayList<>();
             for (final Card c : spells) {
@@ -86,6 +119,11 @@ final class Lucky {
             }
         }
         return out;
+    }
+
+    /** Before the game starts: nothing in hand or in play (a mulligan puts the hand back first). */
+    static boolean opening(final Player ai) {
+        return ai.getCardsIn(ZoneType.Hand).isEmpty() && ai.getCardsIn(ZoneType.Battlefield).isEmpty();
     }
 
     private static int countLands(final Player ai) {

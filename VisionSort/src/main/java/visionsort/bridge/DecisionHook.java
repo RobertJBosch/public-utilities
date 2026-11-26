@@ -65,7 +65,7 @@ public final class DecisionHook {
     }
 
     private Peek peek = Peek.NONE;
-    private boolean lucky;
+    private Lucky.Mode lucky = Lucky.Mode.OFF;
 
     DecisionHook(final String seat, final Policy policy, final JsonArray log, final boolean keepLog,
             final DecisionCounts counts, final GameRecorder recorder, final boolean lookahead,
@@ -80,13 +80,13 @@ public final class DecisionHook {
         this.firstSeat = firstSeat;
     }
 
-    /** What this seat may see beyond its own cards (VisionSort's Omniscient / Cheater skills). */
-    /** Every shuffle of this seat's library comes out as a player would wish (VisionSort's Cheater: Lucky). */
-    DecisionHook lucky(final boolean on) {
-        this.lucky = on;
+    /** Which of this seat's shuffles come out as a player would wish (VisionSort's Omniscient / Cheater: Lucky). */
+    DecisionHook lucky(final Lucky.Mode mode) {
+        this.lucky = mode;
         return this;
     }
 
+    /** What this seat may see beyond its own cards (VisionSort's Omniscient / Cheater skills). */
     DecisionHook peek(final Peek p) {
         this.peek = p;
         return this;
@@ -98,7 +98,7 @@ public final class DecisionHook {
         if (game == null || game.isSimulationCopy() || isNotification(decision)) {
             return forge.get();
         }
-        if (lucky && decision.equals("cheatShuffle")) {
+        if (decision.equals("cheatShuffle") && lucky.arranges(controller.getPlayer())) {
             return Lucky.arrange((forge.game.card.CardCollectionView) args[0], controller.getPlayer());
         }
         final int level = depth;   // 0 = top-level, 1 = asked while deciding something else, ...

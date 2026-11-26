@@ -29,7 +29,6 @@ import java.util.List;
  */
 record Peek(boolean hand, int library) {
     static final Peek NONE = new Peek(false, 0);
-    static final boolean DIAG = Boolean.getBoolean("visionsort.peek.diag");
 
     static Peek from(final JsonObject seat) {
         if (!seat.has("peek")) {
@@ -67,11 +66,6 @@ record Peek(boolean hand, int library) {
         }
         for (final Card c : shown) {
             c.addMayLookTemp(ai);
-        }
-        if (DIAG && !shown.isEmpty()) {
-            final Card c = shown.get(0);
-            System.err.println("PEEKDIAG frozen=" + game.getTracker().isFrozen() + " zone=" + c.getZone().getZoneType()
-                    + " shown=" + c.getView().canBeShownTo(ai.getView()) + " n=" + shown.size());
         }
         return shown;
     }
