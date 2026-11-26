@@ -66,6 +66,7 @@ public final class DecisionHook {
 
     private Peek peek = Peek.NONE;
     private Lucky.Mode lucky = Lucky.Mode.OFF;
+    private Facts facts;
 
     DecisionHook(final String seat, final Policy policy, final JsonArray log, final boolean keepLog,
             final DecisionCounts counts, final GameRecorder recorder, final boolean lookahead,
@@ -89,6 +90,12 @@ public final class DecisionHook {
     /** What this seat may see beyond its own cards (VisionSort's Omniscient / Cheater skills). */
     DecisionHook peek(final Peek p) {
         this.peek = p;
+        return this;
+    }
+
+    /** The blunder survey's facts, told when this seat passes priority (null: none kept). */
+    DecisionHook facts(final Facts f) {
+        this.facts = f;
         return this;
     }
 
@@ -182,6 +189,10 @@ public final class DecisionHook {
                 entry.add("ai_wanted", wanted);
                 entry.addProperty("changed_by", changedBy);
             }
+        }
+        if (facts != null && top && decision.equals("chooseSpellAbilityToPlay")
+                && (chosen == null || chosen instanceof java.util.Collection<?> c && c.isEmpty())) {
+            facts.passed(ai);           // a pass: in its own main phase 2, the end of what it chose to do
         }
         return chosen;
     }

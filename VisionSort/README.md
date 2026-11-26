@@ -84,6 +84,15 @@ and talks to it over stdin / stdout.
   shuffle of its own library (`Lucky`): an opening hand of 3 lands and 4 spells of mana value 3 or less,
   then land and spell in turn until it has 7 lands, then one land in three; otherwise Forge's own order.
   `"lucky": "opening"` arranges only the opening hand. Both leave a game repeatable from its seed.
+- 0.12.0: `"facts": true` (on play, and on play_human, where they come with "ended") asks Forge, as the game
+  goes, what VisionSort's blunder survey judges (`Facts`): each time an AI seat ends its turn (passes in its
+  second main phase with nothing on the stack), the lands it could still legally play, the lands it played, its
+  untapped lands and the spells it could pay for (with their timing and whether the cost has X); and every
+  combat's attackers and blockers with their power, toughness, combat keywords and whether each is a commander,
+  each defending player's life and commander damage, who survived, and the damage that reached players. Asking
+  changes nothing: the same seed gives the same game, checksum for checksum. The game record's events now keep
+  every item of their lists and maps (an 18-blocker combat was recorded as 12 and "...": 6); the decision log
+  still shortens long lists.
 
 The hooked controller is generated from Forge's jar, since Forge's ~113 decision methods change
 between releases. After upgrading Forge, regenerate it:

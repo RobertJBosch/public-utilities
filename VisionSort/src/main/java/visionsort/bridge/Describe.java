@@ -25,9 +25,10 @@ import forge.game.spellability.SpellAbility;
 
 /**
  * Short, stable JSON for whatever a decision was about or chose: a card is "Name#id", a player its
- * name, a spell or ability "Host#id: description", a combat its attackers and blocks. Lists are cut
- * at {@link #MAX_ITEMS} with a count of the rest, so a "choose from your library" doesn't log 90
- * cards. Ids are per game (Forge numbers cards from 1 in every game), so they're stable on replay.
+ * name, a spell or ability "Host#id: description", a combat its attackers and blocks. In the decision
+ * log (of) lists are cut at {@link #MAX_ITEMS} with a count of the rest, so a "choose from your library"
+ * doesn't log 90 cards; the game record's events (full) keep every item. Long texts are cut either way.
+ * Ids are per game (Forge numbers cards from 1 in every game), so they're stable on replay.
  */
 final class Describe {
     static final int MAX_ITEMS = 12;
@@ -44,6 +45,17 @@ final class Describe {
     }
 
     static JsonElement of(final Object o) {
+        return of(o, true);
+    }
+
+    /** Every item of every list and map, never cut: the game record's events (GameRecorder). Seen 2026-11-26: an
+     *  Elven Council board blocking 18 attackers was recorded as 12 blocks and "...": 6, so the blunder survey
+     *  couldn't see the rest. The decision log keeps the cut (a library search would list 90 cards a decision). */
+    static JsonElement full(final Object o) {
+        return of(o, false);
+    }
+
+    private static JsonElement of(final Object o, final boolean cutLists) {
         if (o == null) {
             return JsonNull.INSTANCE;
         }
@@ -103,24 +115,24 @@ final class Describe {
             return new JsonPrimitive(cut((src == null ? "?" : src.getName() + "#" + src.getId()) + ": " + si.getText()));
         }
         if (o instanceof com.google.common.collect.Multimap<?, ?> mm) {
-            return of(mm.asMap());
+            return of(mm.asMap(), cutLists);
         }
         if (o instanceof Pair<?, ?> p) {
             final JsonArray a = new JsonArray();
-            a.add(of(p.getLeft()));
-            a.add(of(p.getRight()));
+            a.add(of(p.getLeft(), cutLists));
+            a.add(of(p.getRight(), cutLists));
             return a;
         }
         if (o instanceof Map<?, ?> m) {
             final JsonObject obj = new JsonObject();
             int n = 0;
             for (final Map.Entry<?, ?> e : m.entrySet()) {
-                if (n++ == MAX_ITEMS) {
+                if (cutLists && n++ == MAX_ITEMS) {
                     obj.addProperty("...", m.size() - MAX_ITEMS);
                     break;
                 }
-                final JsonElement key = of(e.getKey());
-                obj.add(key.isJsonPrimitive() ? key.getAsString() : key.toString(), of(e.getValue()));
+                final JsonElement key = of(e.getKey(), cutLists);
+                obj.add(key.isJsonPrimitive() ? key.getAsString() : key.toString(), of(e.getValue(), cutLists));
             }
             return obj;
         }
@@ -129,8 +141,8 @@ final class Describe {
             int n = 0;
             int more = 0;
             for (final Object x : it) {
-                if (n < MAX_ITEMS) {
-                    a.add(of(x));
+                if (!cutLists || n < MAX_ITEMS) {
+                    a.add(of(x, cutLists));
                 } else {
                     more++;
                 }
@@ -142,7 +154,7 @@ final class Describe {
             return a;
         }
         if (o.getClass().isArray() && o instanceof Object[] arr) {
-            return of(java.util.Arrays.asList(arr));
+            return of(java.util.Arrays.asList(arr), cutLists);
         }
         return new JsonPrimitive(o.getClass().getSimpleName());
     }

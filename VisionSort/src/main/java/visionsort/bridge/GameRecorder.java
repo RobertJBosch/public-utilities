@@ -130,7 +130,7 @@ final class GameRecorder {
         if (cls.isRecord()) {
             for (final RecordComponent rc : cls.getRecordComponents()) {
                 try {
-                    e.add(rc.getName(), Describe.of(rc.getAccessor().invoke(event)));
+                    e.add(rc.getName(), Describe.full(rc.getAccessor().invoke(event)));
                 } catch (ReflectiveOperationException ex) {
                     e.addProperty(rc.getName(), "?");
                 }

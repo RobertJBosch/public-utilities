@@ -39,7 +39,7 @@ import forge.util.MyRandom;
  * Plays one AI-vs-AI game:
  *
  *   {"cmd":"play", "id":1, "seed":101, "format":"Commander", "timeout_s":600,
- *    "lookahead":"off" | "on" | "max", "first":"<seat name>", "log":true, "decisions":true,
+ *    "lookahead":"off" | "on" | "max", "first":"<seat name>", "log":true, "decisions":true, "facts":true,
  *    "record":"none" | "events" | "steps" | "snapshots", "stop_at":k,
  *    "players":[{"name":"...", "deck":"X:/path/deck.dck",
  *                "profile":"Default", "settings":{"PLAY_AGGRO":"true", ...},
@@ -48,7 +48,7 @@ import forge.util.MyRandom;
  * -> {"type":"result", "id":1, "seed":101, "repeatable":true, "ms":5644, "draw":false,
  *     "winner":"...", "turns":8, "end_reason":"AllOpponentsLost", "deck_sizes":[100,100],
  *     "decision_counts":{"<seat>":{"<decision>":[made, changed], ...}, ...},
- *     "record":{...}, "log":[...], "decisions":[...]}
+ *     "record":{...}, "log":[...], "decisions":[...], "facts":{...}}
  *
  * A seat's skill: "profile" (one of Forge's; default Default), "settings" (overrides of Forge's AI
  * settings), "lookahead" (off / on / max; the request's "lookahead" is the default) and "mistakes"
@@ -58,6 +58,8 @@ import forge.util.MyRandom;
  * "first" names the seat that plays first; without it Forge flips for it. "record" adds the game
  * record ("events": each step's events; "steps": with a checksum of the state; "snapshots": with the
  * state) and "stop_at" replays to a step (see GameRecorder). "decisions" asks for the decision log.
+ * "facts" asks for the blunder survey's facts ({"turns": [...], "combats": [...]}, see Facts): what each AI
+ * seat could still have played as it ended its turn, and every combat's creatures, blocks and results.
  *
  * Diagnostics, kept on purpose though VisionSort doesn't read them: "deck_sizes" (a card Forge dropped
  * from a deck shows here), "decision_counts", "effective" (the settings each seat played with), the
@@ -134,6 +136,8 @@ final class PlayCommand {
         final DecisionCounts counts = new DecisionCounts();
         final GameRecorder recorder = new GameRecorder(mode, stopAt);
         final Set<String> names = new HashSet<>();
+        // the blunder survey's facts (Facts), asked of Forge as the game goes; every seat here is an AI
+        final Facts facts = req.has("facts") && req.get("facts").getAsBoolean() ? new Facts(names) : null;
         final String gameTag = String.valueOf(GAMES.incrementAndGet());
 
         GameIds.reset();                        // the same object numbers whatever ran before (GameIds)
@@ -160,7 +164,7 @@ final class PlayCommand {
                     ? RegisteredPlayer.forCommander(deck) : new RegisteredPlayer(deck);
             rp.setPlayer(new BridgeLobbyPlayer(name, profile, new DecisionHook(name, policy, decisions,
                     keepDecisions, counts, recorder, lookahead != Skills.Lookahead.OFF, first).peek(Peek.from(p))
-                    .lucky(Lucky.Mode.from(p))));
+                    .lucky(Lucky.Mode.from(p)).facts(facts)));
             players.add(rp);
             i++;
         }
@@ -177,6 +181,9 @@ final class PlayCommand {
         game.AI_FLAT_MONTE_CARLO_MAX = false;
         game.AI_FLAT_MONTE_CARLO_LITE = false;
         game.subscribeToEvents(recorder);   // before the game starts: shuffles and mulligans are events too
+        if (facts != null) {
+            facts.attach(game);
+        }
         reply.add("effective", effective(game, seats));
 
         final long t0 = System.nanoTime();
@@ -232,6 +239,9 @@ final class PlayCommand {
         recorder.writeTo(reply, game);
         reply.add("deck_sizes", sizes);
         reply.add("decision_counts", counts.toJson());
+        if (facts != null) {
+            reply.add("facts", facts.toJson());
+        }
         if (keepDecisions) {
             reply.add("decisions", decisions);
         }

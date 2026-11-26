@@ -110,6 +110,7 @@ final class HumanGame {
     private boolean watching;
     private int timeoutS;
     private volatile boolean timedOut;            // a watched game ended at its time limit
+    private Facts facts;                          // "facts": true - the AI seats' facts, sent with "ended"
     private boolean showAll;                      // watching: every hand shown
     private volatile HumanSeat seat;              // null when watching
     private volatile Player forced;
@@ -176,6 +177,9 @@ final class HumanGame {
         final DecisionCounts counts = new DecisionCounts();
         final GameRecorder recorder = new GameRecorder(GameRecorder.Mode.NONE, -1);
         final String gameTag = "play" + id;
+        // the blunder survey's facts for the AI seats (Facts), in "ended": a game sent for review carries them
+        final Set<String> aiSeats = new HashSet<>();
+        facts = req.has("facts") && req.get("facts").getAsBoolean() ? new Facts(aiSeats) : null;
 
         GameIds.reset();                        // the same object numbers whatever ran before (GameIds)
         MyRandom.setRandom(new Random(seed));   // decks first, as PlayCommand: copies are spread over printings
@@ -203,7 +207,8 @@ final class HumanGame {
                 final Policy policy = MistakePolicy.from(p.has("mistakes") ? p.getAsJsonObject("mistakes") : null, seed, i);
                 final DecisionHook hook = new DecisionHook(name, policy, new JsonArray(), false, counts, recorder,
                         lookahead != Skills.Lookahead.OFF, first).peek(Peek.from(p))
-                        .lucky(Lucky.Mode.from(p));
+                        .lucky(Lucky.Mode.from(p)).facts(facts);
+                aiSeats.add(name);
                 hook.listen(this::aiDecides);
                 rp.setPlayer(new BridgeLobbyPlayer(name, profile, hook));
             }
@@ -222,6 +227,9 @@ final class HumanGame {
         game.AI_FLAT_MONTE_CARLO_MAX = false;
         game.AI_FLAT_MONTE_CARLO_LITE = false;
         game.subscribeToEvents(this);
+        if (facts != null) {
+            facts.attach(game);
+        }
         for (final Player p : game.getRegisteredPlayers()) {
             if (p.getLobbyPlayer() instanceof HumanController.Lobby) {
                 human = p;
@@ -357,6 +365,9 @@ final class HumanGame {
         m.addProperty("practice", seat != null && seat.practiceUsed);
         m.add("state", state());
         m.add("answers", seat != null ? seat.answers() : new JsonArray());
+        if (facts != null) {
+            m.add("facts", facts.toJson());
+        }
         send("ended", m);
     }
 
