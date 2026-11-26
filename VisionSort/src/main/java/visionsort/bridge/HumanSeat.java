@@ -13,6 +13,7 @@ import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -773,62 +774,138 @@ final class HumanSeat {
     }
 
     // --- building the decisions -------------------------------------------------------------------------------
+    /**
+     * Everything you can do now, then (bridge 0.12.0) your mana abilities, then what Forge says you can't do now -
+     * in that order, so an answer's number means the same action it meant on an older bridge: a game saves your
+     * answers by number, and putting the new ones in between made report #4's game part from its save at decision
+     * 20 of 70.
+     *
+     * Mana abilities ("kind": "mana"): you may activate one whenever you have priority, to float mana or to
+     * sacrifice something in response. Seen in report #4 (0.3.1): Mairsil, the Pretender had Crosis's Attendant's
+     * "{1}, Sacrifice: Add {U}{B}{R}", and the table never offered it - mana abilities came up only when paying.
+     * "tap_only": a plain "{T}: Add" (every land has one), which the table keeps out of the way.
+     *
+     * What Forge won't allow now ("playable": false, with "why"): listed, so the table can say why instead of
+     * leaving it out - report #4's other half: Deathbringer Thoctar's "Remove a +1/+1 counter" through Mairsil,
+     * which had none, just wasn't there. Not a tapped land's "{T}: Add" (every tapped land would be listed).
+     */
     private void priority(final Input in, final int reuse) {
         final List<Object> sas = new ArrayList<>();
         final JsonArray actions = new JsonArray();
+        final List<Map.Entry<Card, ZoneType>> cards = new ArrayList<>();
         for (final ZoneType z : ACTION_ZONES) {
             for (final Card c : me.getCardsIn(z)) {
-                addActions(c, z, sas, actions);
+                cards.add(Map.entry(c, z));
             }
         }
         final forge.game.card.CardCollectionView library = me.getCardsIn(ZoneType.Library);
         if (!library.isEmpty()) {
-            addActions(library.getFirst(), ZoneType.Library, sas, actions);   // "play from the top of your library"
+            cards.add(Map.entry(library.getFirst(), ZoneType.Library));   // "play from the top of your library"
+        }
+        final List<List<SpellAbility>> allowed = new ArrayList<>();
+        for (final Map.Entry<Card, ZoneType> e : cards) {
+            allowed.add(e.getKey().getAllPossibleAbilities(me, true));
+        }
+        for (int pass = 0; pass < 3; pass++) {
+            for (int i = 0; i < cards.size(); i++) {
+                final Card c = cards.get(i).getKey();
+                final ZoneType z = cards.get(i).getValue();
+                final List<SpellAbility> all = allowed.get(i);
+                final long spells = all.stream().filter(SpellAbility::isSpell).count();
+                if (pass < 2) {
+                    for (final SpellAbility sa : all) {
+                        if (sa.isManaAbility() == (pass == 1)) {
+                            addAction(c, z, sa, spells, null, sas, actions);
+                        }
+                    }
+                    continue;
+                }
+                final Set<String> listed = new HashSet<>();
+                for (final SpellAbility sa : all) {
+                    listed.add(key(sa));
+                }
+                // Forge makes new copies of some abilities on each call (a commander's cast from the command zone):
+                // the same ability is told by its text and cost, not by the object
+                for (final SpellAbility sa : c.getAllPossibleAbilities(me, false)) {
+                    if (listed.add(key(sa)) && !(sa.isManaAbility() && onlyTaps(sa))) {
+                        addAction(c, z, sa, spells, whyNot(c, sa), sas, actions);
+                    }
+                }
+            }
         }
         final JsonObject f = new JsonObject();
         f.add("actions", actions);
         send("priority", priorityPrompt(), f, in, sas, null, reuse);
     }
 
-    private void addActions(final Card c, final ZoneType z, final List<Object> sas, final JsonArray actions) {
-        final List<SpellAbility> all = c.getAllPossibleAbilities(me, true);
-        final long spells = all.stream().filter(SpellAbility::isSpell).count();
-        for (final SpellAbility sa : all) {
-            if (sa.isManaAbility()) {
-                continue;                              // mana comes from paying a cost
+    private static String key(final SpellAbility sa) {
+        return sa.isSpell() + "|" + sa.isLandAbility() + "|" + sa + "|" + (sa.getPayCosts() == null ? "" : sa.getPayCosts());
+    }
+
+    private static boolean onlyTaps(final SpellAbility sa) {
+        final forge.game.cost.Cost cost = sa.getPayCosts();
+        return cost != null && cost.hasTapCost() && cost.getCostParts().size() == 1;
+    }
+
+    /** Why Forge won't let you activate or cast this now: the first cost part you can't pay, else its timing. */
+    private String whyNot(final Card c, final SpellAbility sa) {
+        final forge.game.cost.Cost cost = sa.getPayCosts();
+        if (cost != null) {
+            for (final forge.game.cost.CostPart part : cost.getCostParts()) {
+                try {
+                    if (!(part instanceof forge.game.cost.CostPartMana) && !part.canPay(sa, me, false)) {
+                        return "you can't pay its cost: " + clean(part.toString().replace("CARDNAME", c.getName()));
+                    }
+                } catch (RuntimeException e) {
+                    // a cost part that can't be asked outside paying: say nothing about it
+                }
             }
-            final JsonObject a = new JsonObject();
-            final String where = switch (z) {
-                case Command -> " from the command zone";
-                case Graveyard -> " from your graveyard";
-                case Exile -> " from exile";
-                case Library -> " from the top of your library";
-                default -> "";
-            };
-            String label;
-            String kind;
-            if (sa.isLandAbility()) {
-                label = "Play " + c.getName() + where;
-                kind = "land";
-            } else if (sa.isSpell()) {
-                label = "Cast " + c.getName() + where + (spells > 1 ? " - " + clean(sa.toString()) : "");
-                kind = z == ZoneType.Command ? "commander" : "spell";
-            } else {
-                label = c.getName() + ": " + clean(sa.toString());
-                kind = "ability";
-            }
-            a.addProperty("label", label);
-            a.addProperty("kind", kind);
-            a.addProperty("card", c.getId());
-            a.addProperty("cost", sa.getPayCosts() == null ? "" : sa.getPayCosts().toSimpleString());
-            // "yes" / "no" (proven: it can't be paid for now) / "unsure"; targets false: no legal target. See
-            // Affordable - measured 2026-11-23 over 30 games: 68% of the actions offered were provably unpayable, and
-            // not one of 1,734 tried was ever paid for; ~1 ms a priority.
-            a.addProperty("pay", Affordable.of(sa, me).name().toLowerCase(java.util.Locale.ROOT));
-            a.addProperty("targets", Affordable.targetable(sa));
-            actions.add(a);
-            sas.add(sa);
         }
+        return "not now (its timing, or a rule that stops it)";
+    }
+
+    private void addAction(final Card c, final ZoneType z, final SpellAbility sa, final long spells, final String whyNot,
+            final List<Object> sas, final JsonArray actions) {
+        final JsonObject a = new JsonObject();
+        final String where = switch (z) {
+            case Command -> " from the command zone";
+            case Graveyard -> " from your graveyard";
+            case Exile -> " from exile";
+            case Library -> " from the top of your library";
+            default -> "";
+        };
+        String label;
+        String kind;
+        if (sa.isLandAbility()) {
+            label = "Play " + c.getName() + where;
+            kind = "land";
+        } else if (sa.isManaAbility()) {
+            label = c.getName() + ": " + clean(sa.toString());
+            kind = "mana";
+            a.addProperty("tap_only", onlyTaps(sa));
+        } else if (sa.isSpell()) {
+            label = "Cast " + c.getName() + where + (spells > 1 ? " - " + clean(sa.toString()) : "");
+            kind = z == ZoneType.Command ? "commander" : "spell";
+        } else {
+            label = c.getName() + ": " + clean(sa.toString());
+            kind = "ability";
+        }
+        a.addProperty("label", label);
+        a.addProperty("kind", kind);
+        a.addProperty("card", c.getId());
+        a.addProperty("cost", sa.getPayCosts() == null ? "" : sa.getPayCosts().toSimpleString());
+        // "yes" / "no" (proven: it can't be paid for now) / "unsure"; targets false: no legal target. See
+        // Affordable - measured 2026-11-23 over 30 games: 68% of the actions offered were provably unpayable, and
+        // not one of 1,734 tried was ever paid for; ~1 ms a priority.
+        a.addProperty("pay", whyNot != null ? "no"
+                : Affordable.of(sa, me).name().toLowerCase(java.util.Locale.ROOT));
+        a.addProperty("targets", whyNot != null || Affordable.targetable(sa));
+        if (whyNot != null) {
+            a.addProperty("playable", false);
+            a.addProperty("why", whyNot);
+        }
+        actions.add(a);
+        sas.add(sa);
     }
 
     private String priorityPrompt() {
