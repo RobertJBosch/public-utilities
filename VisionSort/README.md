@@ -93,6 +93,13 @@ and talks to it over stdin / stdout.
   changes nothing: the same seed gives the same game, checksum for checksum. The game record's events now keep
   every item of their lists and maps (an 18-blocker combat was recorded as 12 and "...": 6); the decision log
   still shortens long lists.
+- 0.12.1: fixes from a cleanup pass. Looking at abilities only to describe them (the facts, the "can't do now"
+  actions) no longer moves Forge's ability-number counters, which order the AI's choices: a game is numbered as
+  without them (`GameIds.mark` / `restore`). A replay whose last answer Forge refuses says it wasn't exact. A
+  stops change is checked before it's recorded (an unknown phase made a save impossible to resume). A dialog
+  answer that doesn't parse is refused instead of ending the game. A watched game stopped at its time limit is a
+  draw. The facts keep the combat that ends the game. Player-facing text: no Java exception names, the card named
+  instead of "it".
 
 The hooked controller is generated from Forge's jar, since Forge's ~113 decision methods change
 between releases. After upgrading Forge, regenerate it:
