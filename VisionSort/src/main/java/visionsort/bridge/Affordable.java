@@ -63,7 +63,7 @@ final class Affordable {
     private Affordable() {
     }
 
-    /** No legal choice for a target it must have: casting it would only be cancelled (a rules check, no judgement). */
+    /** It has a legal choice for every target it must have; false: casting it would only be canceled (a rules check). */
     static boolean targetable(final SpellAbility sa) {
         return ComputerUtilAbility.isFullyTargetable(sa);
     }

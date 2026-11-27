@@ -49,6 +49,41 @@ final class GameIds {
         set(CombatView.class, "nextId", -2);       // Forge's own starting value
     }
 
+    /** The ability counters a copy moves (SpellAbility.copy takes a number), to put back with {@link #restore}. */
+    private static final Class<?>[] COPIED = {SpellAbility.class, Trigger.class, StaticAbility.class,
+            ReplacementEffect.class};
+
+    /**
+     * Around anything that only looks (Facts, the priority list's "can't do now" part): asking Forge which
+     * abilities a card has copies some of them (a commander's cast from the command zone, may-play options), and
+     * each copy takes a number - so looking would change the numbers the game's own new abilities get, and with
+     * them the order the AI walks its hash sets in (cleanup pass 2026-11-26). The copies are thrown away; put the
+     * counters back after.
+     */
+    static int[] mark() {
+        final int[] m = new int[COPIED.length];
+        for (int i = 0; i < COPIED.length; i++) {
+            m[i] = get(COPIED[i], "maxId");
+        }
+        return m;
+    }
+
+    static void restore(final int[] mark) {
+        for (int i = 0; i < COPIED.length; i++) {
+            set(COPIED[i], "maxId", mark[i]);
+        }
+    }
+
+    private static int get(final Class<?> cls, final String field) {
+        try {
+            final Field f = cls.getDeclaredField(field);
+            f.setAccessible(true);
+            return f.getInt(null);
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException("Forge's " + cls.getSimpleName() + "." + field + " changed: " + e, e);
+        }
+    }
+
     private static void set(final Class<?> cls, final String field, final int value) {
         try {
             final Field f = cls.getDeclaredField(field);

@@ -239,6 +239,11 @@ final class HumanSeat {
     /** Where you get priority. record: a change made during the game, kept in the answers in order, since
      *  it changes which decisions come next (a replay applies it at the same point). */
     void setStops(final JsonObject s, final boolean record) {
+        // checked whole before anything changes or is recorded (cleanup pass 2026-11-26: an unknown phase was kept in
+        // the answers first, so the save could never be resumed, and a bad "theirs" left "mine" already changed)
+        final Set<PhaseType> mine = phases(s.has("mine") ? s.getAsJsonArray("mine") : null);
+        final Set<PhaseType> theirs = phases(s.has("theirs") ? s.getAsJsonArray("theirs") : null);
+        final boolean spells = !s.has("ai_spells") || s.get("ai_spells").getAsBoolean();
         if (record) {
             final JsonObject r = new JsonObject();
             for (final String k : new String[] {"mine", "theirs", "ai_spells"}) {
@@ -251,9 +256,9 @@ final class HumanSeat {
                 answers.add(r);
             }
         }
-        stopsMine = phases(s.has("mine") ? s.getAsJsonArray("mine") : null);
-        stopsTheirs = phases(s.has("theirs") ? s.getAsJsonArray("theirs") : null);
-        aiSpells = !s.has("ai_spells") || s.get("ai_spells").getAsBoolean();
+        stopsMine = mine;
+        stopsTheirs = theirs;
+        aiSpells = spells;
     }
 
     private static Set<PhaseType> phases(final JsonArray names) {
@@ -262,7 +267,7 @@ final class HumanSeat {
             for (final JsonElement e : names) {
                 final PhaseType p = ViewState.phaseType(e.getAsString());
                 if (p == null) {
-                    throw new IllegalArgumentException("unknown phase " + e.getAsString());
+                    throw new IllegalArgumentException("Unknown phase " + e.getAsString());
                 }
                 out.add(p);
             }
@@ -401,8 +406,12 @@ final class HumanSeat {
     }
 
     private void refuse(final int id, final String reason) {
-        if (replaying) {
-            drift();                                   // a recorded answer this game won't take: live from here
+        if (replaying || resumePending) {
+            // a recorded answer this game won't take: live from here, and it isn't counted as replayed. Its last
+            // answer too (resumePending): that used to send VisionSort a "refused" for a decision it never saw,
+            // then "resumed" said exact (cleanup pass 2026-11-26)
+            replayed--;
+            drift();
             return;
         }
         final JsonObject m = new JsonObject();
@@ -444,7 +453,14 @@ final class HumanSeat {
             if (a == ABORTED) {
                 return null;
             }
-            final String problem = check.apply(a);
+            String problem;
+            try {
+                problem = check.apply(a);
+            } catch (RuntimeException e) {
+                // an answer that doesn't parse ("picks":["a"], "number":"x") is refused like any wrong one - it used
+                // to throw into Forge's game loop and end the game "failed" (cleanup pass 2026-11-26)
+                problem = "That answer doesn't fit this choice";
+            }
             if (problem == null) {
                 record(pending, a);
                 return a;
@@ -491,7 +507,7 @@ final class HumanSeat {
             build(in, reuse);
         } catch (RuntimeException e) {
             e.printStackTrace();                       // a decision we couldn't build: say so rather than hang
-            owner.note("The bridge couldn't show this choice (" + e.getClass().getSimpleName() + "); Forge decides it");
+            owner.note("This choice couldn't be shown, so Forge chose for you");     // (the stack trace is in bridge.log)
             if (in instanceof InputPassPriority) {
                 in.selectButtonOK();
             } else if (enabled[1]) {
@@ -551,7 +567,7 @@ final class HumanSeat {
             problem = applyTo(p, a);
         } catch (RuntimeException e) {
             e.printStackTrace();
-            problem = "Forge couldn't do that (" + e.getClass().getSimpleName() + ")";
+            problem = "Forge couldn't do that: try something else";             // (the stack trace is in bridge.log)
         } finally {
             applying = false;
         }
@@ -579,7 +595,7 @@ final class HumanSeat {
         final Input in = p.input();
         if (a.has("cancel")) {
             if (!enabled[1]) {
-                return "This can't be cancelled";
+                return "This can't be canceled";
             }
             in.selectButtonCancel();
             return null;
@@ -765,10 +781,10 @@ final class HumanSeat {
 
     private static String why(final Card attacker, final Card blocker) {
         if (attacker.hasKeyword(Keyword.FLYING) && !blocker.hasKeyword(Keyword.FLYING) && !blocker.hasKeyword(Keyword.REACH)) {
-            return ": it has flying";
+            return ": " + attacker.getName() + " has flying";
         }
         if (blocker.isTapped()) {
-            return ": it's tapped";
+            return ": " + blocker.getName() + " is tapped";
         }
         return "";
     }
@@ -787,7 +803,8 @@ final class HumanSeat {
      *
      * What Forge won't allow now ("playable": false, with "why"): listed, so the table can say why instead of
      * leaving it out - report #4's other half: Deathbringer Thoctar's "Remove a +1/+1 counter" through Mairsil,
-     * which had none, just wasn't there. Not a tapped land's "{T}: Add" (every tapped land would be listed).
+     * which had none, just wasn't there. Not a plain "{T}: Add" Forge won't allow (a tapped land, a summoning-sick
+     * mana creature: every one would be listed).
      */
     private void priority(final Input in, final int reuse) {
         final List<Object> sas = new ArrayList<>();
@@ -806,31 +823,43 @@ final class HumanSeat {
         for (final Map.Entry<Card, ZoneType> e : cards) {
             allowed.add(e.getKey().getAllPossibleAbilities(me, true));
         }
-        for (int pass = 0; pass < 3; pass++) {
-            for (int i = 0; i < cards.size(); i++) {
-                final Card c = cards.get(i).getKey();
-                final ZoneType z = cards.get(i).getValue();
-                final List<SpellAbility> all = allowed.get(i);
-                final long spells = all.stream().filter(SpellAbility::isSpell).count();
-                if (pass < 2) {
+        // what 0.12.0 added (passes 1 and 2) only looks, but looking copies some abilities, and copies take numbers
+        // from Forge's ability counters: they're put back after, so a game numbers its abilities as on 0.11.0 (GameIds)
+        int[] ids = null;
+        try {
+            for (int pass = 0; pass < 3; pass++) {
+                if (pass == 1) {
+                    ids = GameIds.mark();
+                }
+                for (int i = 0; i < cards.size(); i++) {
+                    final Card c = cards.get(i).getKey();
+                    final ZoneType z = cards.get(i).getValue();
+                    final List<SpellAbility> all = allowed.get(i);
+                    final long spells = all.stream().filter(SpellAbility::isSpell).count();
+                    if (pass < 2) {
+                        for (final SpellAbility sa : all) {
+                            if (sa.isManaAbility() == (pass == 1)) {
+                                addAction(c, z, sa, spells, null, sas, actions);
+                            }
+                        }
+                        continue;
+                    }
+                    final Set<String> listed = new HashSet<>();
                     for (final SpellAbility sa : all) {
-                        if (sa.isManaAbility() == (pass == 1)) {
-                            addAction(c, z, sa, spells, null, sas, actions);
+                        listed.add(key(sa));
+                    }
+                    // Forge makes new copies of some abilities on each call (a commander's cast from the command
+                    // zone): the same ability is told by its text and cost, not by the object
+                    for (final SpellAbility sa : c.getAllPossibleAbilities(me, false)) {
+                        if (listed.add(key(sa)) && !(sa.isManaAbility() && onlyTaps(sa))) {
+                            addAction(c, z, sa, spells, whyNot(c, sa), sas, actions);
                         }
                     }
-                    continue;
                 }
-                final Set<String> listed = new HashSet<>();
-                for (final SpellAbility sa : all) {
-                    listed.add(key(sa));
-                }
-                // Forge makes new copies of some abilities on each call (a commander's cast from the command zone):
-                // the same ability is told by its text and cost, not by the object
-                for (final SpellAbility sa : c.getAllPossibleAbilities(me, false)) {
-                    if (listed.add(key(sa)) && !(sa.isManaAbility() && onlyTaps(sa))) {
-                        addAction(c, z, sa, spells, whyNot(c, sa), sas, actions);
-                    }
-                }
+            }
+        } finally {
+            if (ids != null) {
+                GameIds.restore(ids);
             }
         }
         final JsonObject f = new JsonObject();

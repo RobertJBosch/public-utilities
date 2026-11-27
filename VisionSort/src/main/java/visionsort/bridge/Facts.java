@@ -79,6 +79,16 @@ final class Facts {
                 || !game.getStack().isEmpty()) {
             return;
         }
+        final int[] ids = GameIds.mark();
+        try {
+            turns.put(ph.getTurn() + ":" + ai.getName(), look(ai, ph));
+        } finally {
+            GameIds.restore(ids);               // looking mustn't change the numbers the game gives out (GameIds)
+        }
+    }
+
+    /** What it could still do as its turn ends (see the class doc). */
+    private static JsonObject look(final Player ai, final PhaseHandler ph) {
         final JsonObject t = new JsonObject();
         t.addProperty("turn", ph.getTurn());
         t.addProperty("seat", ai.getName());
@@ -117,7 +127,7 @@ final class Facts {
         }
         t.add("playable_lands", lands);
         t.add("castable", castable);
-        turns.put(ph.getTurn() + ":" + ai.getName(), t);
+        return t;
     }
 
     @Subscribe
@@ -244,6 +254,9 @@ final class Facts {
     }
 
     JsonObject toJson() {
+        // a combat that ends the game never gets Forge's "combat ended" (the game is over first): it's the one the
+        // survey most needs, so it's closed here (cleanup pass 2026-11-26: it was left out)
+        end();
         final JsonObject o = new JsonObject();
         final JsonArray t = new JsonArray();
         turns.values().forEach(t::add);

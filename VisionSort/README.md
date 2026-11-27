@@ -72,8 +72,8 @@ and talks to it over stdin / stdout.
   Forge 2.0.16's look-ahead also stops at time limits (10 s a decision however high a profile sets it,
   60 s a turn, a deadline per rollout, a first rollout timed to size the search), so Hard and Hardest
   games played differently from run to run and PC to PC. With the agent, only Forge's AI classes
-  (forge/ai) read a counter that moves when they ask it the time, so those limits are never reached and
-  the search is bounded by its counts alone; the ready message says `"work_clock": true`. Each priority
+  (forge/ai) read a counter that moves a fixed step each time they ask it the time, so those limits are
+  reached after the same work everywhere; the ready message says `"work_clock": true`. Each priority
   action also says whether it can be paid for now (`"pay"`: `"yes"`; `"no"`, proven: even every mana
   source at its most can't cover the cost; or `"unsure"`) and whether it has a legal target
   (`"targets"`), so a table can keep what you can't do out of the way (`Affordable`). Built for Java 25.

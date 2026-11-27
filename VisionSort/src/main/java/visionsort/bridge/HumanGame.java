@@ -349,7 +349,10 @@ final class HumanGame {
         flush();
         final GameOutcome outcome = game.getOutcome();
         final JsonObject m = new JsonObject();
-        if (outcome == null || outcome.isDraw()) {
+        // a game stopped at its time limit is a draw: Forge's onGameOver makes everyone still in it a winner, so
+        // isDraw() says no (PlayCommand works around the same; cleanup pass 2026-11-26: a watched game didn't)
+        final boolean draw = timedOut || outcome == null || outcome.isDraw();
+        if (draw) {
             m.add("winner", com.google.gson.JsonNull.INSTANCE);
         } else {
             int winner = -1;
@@ -360,7 +363,7 @@ final class HumanGame {
             }
             m.addProperty("winner", winner);
         }
-        m.addProperty("reason", reason(outcome));
+        m.addProperty("reason", timedOut ? "The game ran out of time: it's a draw" : reason(outcome));
         m.addProperty("turns", outcome == null ? game.getPhaseHandler().getTurn() : outcome.getLastTurnNumber());
         m.addProperty("practice", seat != null && seat.practiceUsed);
         m.add("state", state());
@@ -404,19 +407,17 @@ final class HumanGame {
     }
 
     private String lost(final Player p, final PlayerOutcome o) {
-        {
-            final boolean you = isYou(p);
-            final String who = you ? "You" : p.getName();
-            return switch (o.lossState) {
-                case Conceded -> who + " conceded";
-                case LifeReachedZero -> (you ? "Your" : p.getName() + "'s") + " life total reached 0";
-                case Milled -> who + " drew from an empty library";
-                case Poisoned -> who + (you ? " have" : " has") + " 10 poison counters";
-                case CommanderDamage -> who + " took 21 damage from a commander";
-                case SpellEffect -> who + " lost to " + (o.loseConditionSpell == null ? "a card's effect" : o.loseConditionSpell);
-                default -> who + " lost (" + o.lossState + ")";
-            };
-        }
+        final boolean you = isYou(p);
+        final String who = you ? "You" : p.getName();
+        return switch (o.lossState) {
+            case Conceded -> who + " conceded";
+            case LifeReachedZero -> (you ? "Your" : p.getName() + "'s") + " life total reached 0";
+            case Milled -> who + " drew from an empty library";
+            case Poisoned -> who + (you ? " have" : " has") + " 10 poison counters";
+            case CommanderDamage -> who + " took 21 damage from a commander";
+            case SpellEffect -> who + " lost to " + (o.loseConditionSpell == null ? "a card's effect" : o.loseConditionSpell);
+            default -> who + " lost (" + o.lossState + ")";
+        };
     }
 
     private boolean isYou(final Player p) {

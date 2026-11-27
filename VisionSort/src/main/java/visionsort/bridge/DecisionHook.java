@@ -81,7 +81,7 @@ public final class DecisionHook {
         this.firstSeat = firstSeat;
     }
 
-    /** Which of this seat's shuffles come out as a player would wish (VisionSort's Omniscient / Cheater: Lucky). */
+    /** Which of this seat's shuffles come out as a player would wish (VisionSort's Cheater: Lucky). */
     DecisionHook lucky(final Lucky.Mode mode) {
         this.lucky = mode;
         return this;

@@ -32,8 +32,9 @@ import java.util.concurrent.atomic.AtomicLong;
  * rollout timed to cut the candidates to what "this device" can afford, and a pause of a few turns after slow
  * decisions. Whichever of those bites first depends on the machine and the moment, so Hard and Hardest games
  * didn't repeat: the same seed played differently (seen in the 2026-11-22 recheck). Counted, the clock only moves
- * when the AI asks it the time, by STEP each time - so it never comes near any of those limits, and the search is
- * bounded by its counts alone: the same on every PC, every run. The cost: a slow PC waits longer on a decision.
+ * when the AI asks it the time, by STEP each time - so those limits are reached after the same work on every PC,
+ * every run (STEP is sized so they bind after about as much work as they did on real time). The cost: a slow PC
+ * waits longer on a decision.
  *
  * Only forge/ai is rewritten: the bridge's own timeouts (a game's time limit, a stuck game) keep real time.
  */

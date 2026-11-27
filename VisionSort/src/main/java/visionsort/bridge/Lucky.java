@@ -60,7 +60,7 @@ final class Lucky {
                 case "always" -> ALWAYS;
                 case "off" -> OFF;
                 default -> throw new IllegalArgumentException(
-                        "lucky must be true, false, \"opening\" or \"always\", not " + v);
+                        "lucky must be true, false, \"opening\", \"always\" or \"off\", not " + v);
             };
         }
 
