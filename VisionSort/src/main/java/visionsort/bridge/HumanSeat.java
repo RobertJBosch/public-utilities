@@ -1317,6 +1317,16 @@ final class HumanSeat {
         return a == null ? 0 : a.getAsJsonArray("picks").get(0).getAsInt();
     }
 
+    /** Lethal damage for a blocker now (Forge's own count: toughness less damage marked and already assigned this
+     *  step), and 1 from a deathtouch source (702.2c) unless it already has lethal. */
+    private static int lethal(final Card blocker, final boolean deathtouch) {
+        if (blocker == null) {
+            return 0;
+        }
+        final int need = Math.max(0, blocker.getLethalDamage());
+        return deathtouch && need > 0 ? 1 : need;
+    }
+
     private Map<CardView, Integer> damage(final CardView attacker, final List<CardView> blockers, final int amount,
             final GameEntityView defender) {
         final boolean trample = defender != null;
@@ -1327,6 +1337,18 @@ final class HumanSeat {
         f.add("blockers", ids);
         f.addProperty("amount", amount);
         f.addProperty("trample", trample);
+        // each blocker's lethal damage, in the blockers' order: what it must get before any goes past it (rule
+        // 702.19c - the user, 2026-11-26: fixed in 0.3.2; a person could trample over without killing a blocker)
+        final Card source = game.findById(attacker.getId());
+        final boolean deathtouch = source != null && source.hasKeyword(Keyword.DEATHTOUCH);
+        final Map<Integer, Integer> lethal = new HashMap<>();
+        final JsonObject lethals = new JsonObject();                       // {"<blocker id>": n}
+        for (final CardView v : blockers) {
+            final int n = lethal(game.findById(v.getId()), deathtouch);
+            lethal.put(v.getId(), n);
+            lethals.addProperty(String.valueOf(v.getId()), n);
+        }
+        f.add("lethal", lethals);
         final JsonObject a = ask("damage", "Divide " + nameOf(attacker) + "'s " + amount + " damage", f, x -> {
             if (x.has("auto")) {
                 return null;
@@ -1334,36 +1356,48 @@ final class HumanSeat {
             if (!x.has("assign")) {
                 return "Assign the damage, or let Forge do it";
             }
-            int sum = x.has("to_defender") ? x.get("to_defender").getAsInt() : 0;
+            final int past = x.has("to_defender") ? x.get("to_defender").getAsInt() : 0;
+            int sum = past;
             if (sum < 0) {
-                return "Assign no less than 0 damage";
+                return "Damage can't be negative";
             }
             if (sum > 0 && !trample) {
-                return "Only an attacker with trample assigns damage to the player";
+                return "Only an attacker with trample assigns damage past its blockers";
             }
-            final Set<Integer> seen = new java.util.HashSet<>();
+            final Map<Integer, Integer> given = new HashMap<>();
             for (final JsonElement e : x.getAsJsonArray("assign")) {
                 final int id = e.getAsJsonArray().get(0).getAsInt();
                 final int n = e.getAsJsonArray().get(1).getAsInt();
-                if (blockers.stream().noneMatch(b -> b.getId() == id) || !seen.add(id)) {
+                if (!lethal.containsKey(id) || given.containsKey(id)) {
                     return "Assign damage to each blocker once";
                 }
                 if (n < 0) {
-                    return "Assign no less than 0 damage";
+                    return "Damage can't be negative";
                 }
+                given.put(id, n);
                 sum += n;
             }
-            return sum == amount ? null : "Assign all " + amount + " damage";
+            if (sum != amount) {
+                return "Assign all " + amount + " damage";
+            }
+            if (past > 0) {
+                for (final CardView v : blockers) {
+                    if (given.getOrDefault(v.getId(), 0) < lethal.get(v.getId())) {
+                        return nameOf(v) + " needs " + lethal.get(v.getId()) + " (lethal damage) before any can go past it";
+                    }
+                }
+            }
+            return null;
         });
         final Map<CardView, Integer> out = new HashMap<>();
         if (a == null || a.has("auto")) {
+            // (as since 0.7: never less than lethal() asks, so "auto" always passes the check above, and a saved
+            // game's auto answers replay as they were)
             int left = amount;
-            final Card source = game.findById(attacker.getId());
-            final boolean deathtouch = source != null && source.hasKeyword(Keyword.DEATHTOUCH);
             for (int i = 0; i < blockers.size(); i++) {
                 final Card b = game.findById(blockers.get(i).getId());
-                final int lethal = b == null ? 0 : deathtouch ? 1 : Math.max(0, b.getNetToughness() - b.getDamage());
-                final int n = (i == blockers.size() - 1 && !trample) ? left : Math.min(left, lethal);
+                final int kill = b == null ? 0 : deathtouch ? 1 : Math.max(0, b.getNetToughness() - b.getDamage());
+                final int n = (i == blockers.size() - 1 && !trample) ? left : Math.min(left, kill);
                 out.put(blockers.get(i), n);
                 left -= n;
             }

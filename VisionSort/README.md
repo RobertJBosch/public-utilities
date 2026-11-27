@@ -100,6 +100,10 @@ and talks to it over stdin / stdout.
   answer that doesn't parse is refused instead of ending the game. A watched game stopped at its time limit is a
   draw. The facts keep the combat that ends the game. Player-facing text: no Java exception names, the card named
   instead of "it".
+- 0.12.2: trample follows rule 702.19c. A combat-damage decision carries each blocker's lethal damage (`"lethal":
+  {"<blocker id>": n}`: Forge's count - toughness less damage already marked or assigned - and 1 from a deathtouch
+  source), and an answer that sends damage past the blockers before each has it is refused. Forge splits freely
+  among blockers here (its orderCombatants rule is off: no damage assignment order).
 
 The hooked controller is generated from Forge's jar, since Forge's ~113 decision methods change
 between releases. After upgrading Forge, regenerate it:
